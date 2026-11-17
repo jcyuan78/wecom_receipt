@@ -171,10 +171,10 @@ class MessageStore:
                 (iso(utcnow()), msg_id),
             )
 
-    def mark_retry(self, msg_id: str, error: str) -> None:
+    def mark_retry(self, msg_id: str, error: str) -> str | None:
         row = self.get(msg_id)
         if row is None:
-            return
+            return None
         attempts = int(row["attempts"]) + 1
         now = utcnow()
 
@@ -193,6 +193,7 @@ class MessageStore:
                 (status, attempts, error[:2000], next_attempt, iso(now), msg_id),
             )
         log.warning("消息 %s 处理失败（第 %d 次）: %s", msg_id, attempts, error)
+        return status
 
     def mark_permanent_failure(self, msg_id: str, error: str) -> None:
         with self._lock:

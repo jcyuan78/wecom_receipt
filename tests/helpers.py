@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -88,7 +89,7 @@ def ollama_transport(
         "confidence": 0.93,
     }
     payloads = extractions or [default_payload]
-    calls = {"classify": 0, "extract": 0}
+    calls = {"analyze": 0, "classify": 0, "extract": 0, "num_ctx": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         import json as _json
@@ -97,8 +98,18 @@ def ollama_transport(
             return httpx.Response(200, json={"models": [{"name": "qwen2.5vl:7b"}]})
         if request.url.path == "/api/chat":
             body = _json.loads(request.content)
+            calls["num_ctx"] = body.get("options", {}).get("num_ctx", 0)
             prompt = body["messages"][-1]["content"]
-            if "Categories:" in prompt:
+            if "You are looking at a photo" in prompt:
+                calls["analyze"] += 1
+                answer = {
+                    "category": category,
+                    "confidence": 0.96,
+                    "reason": "测试分类",
+                    "field_confidence": 0.93,
+                }
+                answer.update(payloads[0])
+            elif "Categories:" in prompt:
                 calls["classify"] += 1
                 answer = {"category": category, "confidence": 0.96, "reason": "测试分类"}
             else:
@@ -137,9 +148,9 @@ def two_invoice_image_bytes() -> bytes:
 
 def media_transport(
     extra: dict[str, tuple[bytes, str | None, str]] | None = None,
-) -> tuple[httpx.MockTransport, dict[str, int]]:
+) -> tuple[httpx.MockTransport, dict[str, Any]]:
     """Mock of the two WeCom endpoints this service uses."""
-    state = {"token_calls": 0, "media_calls": 0, "fail_media": 0, "oversized": 0}
+    state = {"token_calls": 0, "media_calls": 0, "fail_media": 0, "oversized": 0, "messages": []}
     extra = extra or {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -148,6 +159,11 @@ def media_transport(
             return httpx.Response(
                 200, json={"errcode": 0, "errmsg": "ok", "access_token": "mock-token", "expires_in": 7200}
             )
+
+        if request.url.path == "/cgi-bin/message/send":
+            body = json.loads(request.content)
+            state["messages"].append(body)
+            return httpx.Response(200, json={"errcode": 0, "errmsg": "ok"})
 
         if request.url.path == "/cgi-bin/media/get":
             state["media_calls"] += 1

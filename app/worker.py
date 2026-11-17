@@ -80,8 +80,21 @@ class Worker(threading.Thread):
             log.info("消息 %s 处理完成（%s）", msg_id, row.get("filename"))
         except MediaTooLarge as exc:
             self.store.mark_permanent_failure(msg_id, str(exc))
+            self._notify_failure(row, str(exc))
         except Exception as exc:  # noqa: BLE001 - retry policy lives in the store
-            self.store.mark_retry(msg_id, f"{type(exc).__name__}: {exc}")
+            error = f"{type(exc).__name__}: {exc}"
+            status = self.store.mark_retry(msg_id, error)
+            if status == "failed":
+                self._notify_failure(row, error)
+
+    def _notify_failure(self, row: dict, error: str) -> None:
+        handler = getattr(self.processor, "notify_failure", None)
+        if not callable(handler):
+            return
+        try:
+            handler(row, error)
+        except Exception:  # noqa: BLE001 - never fail the worker on a notification
+            log.warning("发送失败通知时出错", exc_info=True)
 
     def _download(self, row: dict):
         media_id = row.get("media_id")

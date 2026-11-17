@@ -1,10 +1,10 @@
-"""Auto routing processor: classify -> receipt/homework/other directories."""
+"""Auto routing processor: analyze -> receipt/homework/other directories."""
 
 from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from .imaging import load_image
 from .invoices.db import InvoiceDB
 from .invoices.service import InvoiceService
 from .jobs import write_job
+from .notify import ResultNotifier
 from .ollama import OllamaClient
 from .processor import Job
 from .storage import safe_filename
@@ -35,10 +36,27 @@ def _unique_path(path: Path) -> Path:
     raise RuntimeError(f"无法生成唯一文件名: {path}")
 
 
+def _received_date(job: Job) -> date:
+    raw = str(job.data.get("received_at") or "")
+    try:
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.date()
+    except ValueError:
+        return date.today()
+
+
 class AutoProcessor:
     """Used with ``WECOM_PROCESSOR=auto``."""
 
-    def __init__(self, settings: Settings, *, ollama_transport=None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        ollama_transport=None,
+        wecom_client=None,
+    ) -> None:
         self.settings = settings
         settings.ensure_dirs()
         self.ollama = OllamaClient(
@@ -46,12 +64,16 @@ class AutoProcessor:
             model=settings.ollama_model,
             timeout=settings.ollama_timeout,
             keep_alive=settings.ollama_keep_alive,
+            num_ctx=settings.ollama_num_ctx,
             transport=ollama_transport,
         )
         self.db = InvoiceDB(settings.invoice_db_path)
         self.db.init()
         self.classifier = Classifier(self.ollama)
         self.invoice_service = InvoiceService(settings, self.ollama, self.db)
+        self.notifier = (
+            ResultNotifier(wecom_client, settings) if wecom_client is not None else None
+        )
 
     def __call__(self, job: Job) -> None:
         source = Path(job.file_path)
@@ -65,15 +87,21 @@ class AutoProcessor:
                 log.warning("无法读取图片，归入 other: %s", source)
                 outcome = self._move(job, source, self.settings.other_dir, "other")
             else:
-                classification = self.classifier.classify(image)
-                if classification.category == "receipt":
-                    outcome = self.invoice_service.process(job, source, image)
+                analysis = self.classifier.analyze(
+                    image,
+                    received_date=_received_date(job),
+                    default_currency=self.settings.default_currency,
+                )
+                if analysis.category == "receipt":
+                    outcome = self.invoice_service.process(
+                        job, source, image, analysis=analysis
+                    )
                     outcome["classifier"] = {
-                        "category": classification.category,
-                        "confidence": classification.confidence,
-                        "reason": classification.reason,
+                        "category": analysis.category,
+                        "confidence": analysis.confidence,
+                        "reason": analysis.reason,
                     }
-                elif classification.category == "homework":
+                elif analysis.category == "homework":
                     outcome = self._move(job, source, self.settings.homework_dir, "homework")
                 else:
                     outcome = self._move(job, source, self.settings.other_dir, "other")
@@ -81,6 +109,14 @@ class AutoProcessor:
             outcome = self._move(job, source, self.settings.other_dir, "other")
 
         self._update_job(job, outcome)
+        if outcome.get("category") == "receipt" and self.notifier is not None:
+            self.notifier.invoice_result(job.data, outcome)
+
+    def notify_failure(self, row: dict[str, Any], error: str) -> None:
+        """Called by the worker after the last retry failed."""
+        if self.notifier is None:
+            return
+        self.notifier.invoice_failure(str(row.get("from_user") or ""), error)
 
     # ------------------------------------------------------------------ files
     def _move(self, job: Job, source: Path, base: Path, category: str) -> dict[str, Any]:
@@ -106,6 +142,7 @@ class AutoProcessor:
             job.data["file"]["name"] = Path(new_path).name
         write_job(job.path.parent, job.data)
         log.info("任务 %s 已更新: %s", job.msg_id, new_path or "-")
+
     def close(self) -> None:
         self.db.close()
         self.ollama.close()

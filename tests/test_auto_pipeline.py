@@ -40,7 +40,7 @@ def _open_db(settings) -> InvoiceDB:
 def test_single_receipt_is_routed_extracted_and_stored():
     settings = _auto_settings("auto_receipt")
     media = {"RECEIPT_1": (receipt_image_bytes(), "receipt.jpg", "image/jpeg")}
-    transport, _ = media_transport(media)
+    transport, state = media_transport(media)
     ollama, calls = ollama_transport("receipt")
     app = create_app(settings, transport=transport, ollama_transport=ollama)
 
@@ -52,7 +52,15 @@ def test_single_receipt_is_routed_extracted_and_stored():
 
         row = ctx.store.get("5001")
         assert row["status"] == "done"
-        assert calls == {"classify": 1, "extract": 1}
+        assert calls["analyze"] == 1
+        assert calls["extract"] == 0  # one-shot analysis, no re-OCR on the crop
+        assert calls["num_ctx"] == 8192
+
+        assert len(state["messages"]) == 1
+        message = state["messages"][0]
+        assert message["touser"] == "zhangsan"
+        assert message["agentid"] == 1000002
+        assert "3,280 JPY" in message["text"]["content"]
 
         db = _open_db(settings)
         records = db.query(date(2026, 1, 1), date(2026, 12, 31))
@@ -137,6 +145,7 @@ def test_multiple_invoices_are_split_and_stored_separately():
         assert paths[0] != paths[1]
         assert all(path.exists() for path in paths)
         assert "_p1" in paths[0].stem and "_p2" in paths[1].stem
+        assert calls["analyze"] == 1
         assert calls["extract"] == 2
 
         job = json.loads((settings.jobs_dir / "5401.json").read_text(encoding="utf-8"))
@@ -209,8 +218,9 @@ def test_duplicate_message_is_moved_aside():
         assert moved.exists()
         assert moved.is_relative_to(settings.receipt_dir / "_duplicates")
 
-        # The duplicate costs a classification call, but no extraction.
-        assert calls["extract"] == 1
+        # Each message is analyzed once; the duplicate never costs an extraction.
+        assert calls["analyze"] == 2
+        assert calls["extract"] == 0
         db.close()
 
 
@@ -239,6 +249,7 @@ def test_homework_is_routed_without_invoice_row():
 
         db = _open_db(settings)
         assert db.query(date(2026, 1, 1), date(2026, 12, 31)) == []
+        assert calls["analyze"] == 1
         assert calls["extract"] == 0
         db.close()
 
@@ -259,3 +270,32 @@ def test_low_confidence_marks_needs_review():
         record = db.query(date(2026, 1, 1), date(2026, 12, 31))[0]
         assert record["needs_review"] is True
         db.close()
+
+
+def test_failure_is_reported_to_user():
+    settings = _auto_settings("auto_fail", max_attempts=1)
+    media = {"RECEIPT_1": (receipt_image_bytes(), "receipt.jpg", "image/jpeg")}
+    transport, state = media_transport(media)
+    empty = {
+        "invoice_no": None,
+        "date": None,
+        "vendor": None,
+        "currency": "JPY",
+        "total": None,
+        "items": [],
+        "rotation": 0,
+        "confidence": 0.2,
+    }
+    ollama, _ = ollama_transport("receipt", extraction=empty)
+    app = create_app(settings, transport=transport, ollama_transport=ollama)
+
+    with TestClient(app) as client:
+        ctx = app.state.ctx
+        post_encrypted(client, ctx.crypto, image_message("5601", "RECEIPT_1"))
+        ctx.worker.process_once()
+
+        row = ctx.store.get("5601")
+        assert row["status"] == "failed"
+        assert state["messages"], "失败时应回复用户"
+        text = state["messages"][0]["text"]["content"]
+        assert "重新拍摄" in text

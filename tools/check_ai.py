@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +25,7 @@ for _stream in (sys.stdout, sys.stderr):
 from app.classifier import Classifier  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.imaging import load_image  # noqa: E402
-from app.invoices.extract import extract_invoice  # noqa: E402
+
 from app.ollama import OllamaClient, OllamaError  # noqa: E402
 
 VISION_HINTS = ("vl", "vision", "llava", "minicpm-v", "moondream", "gemma3")
@@ -74,14 +75,14 @@ def main() -> int:
     image = load_image(args.image)
     print(f"\n测试图片: {args.image} {image.size}")
     try:
-        classification = Classifier(client).classify(image)
-        print(f"分类: {classification.category} ({classification.confidence:.2f}) {classification.reason}")
-        if classification.category == "receipt":
-            fields, rotation = extract_invoice(
-                client, image, default_currency=settings.default_currency
-            )
-            print(f"旋转: {rotation}°")
-            print(json.dumps(fields.to_public_dict(), ensure_ascii=False, indent=2))
+        analysis = Classifier(client).analyze(
+            image,
+            received_date=date.today(),
+            default_currency=settings.default_currency,
+        )
+        print(f"分类: {analysis.category} ({analysis.confidence:.2f}) {analysis.reason}")
+        if analysis.fields is not None:
+            print(json.dumps(analysis.fields.to_public_dict(), ensure_ascii=False, indent=2))
     except OllamaError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1

@@ -128,6 +128,53 @@ class WeComClient:
                 return self._token
             return self._fetch_token()
 
+    # ------------------------------------------------------------- messaging
+    def send_text(self, to_user: str, content: str, *, agent_id: int = 0) -> None:
+        """Send an application text message to one member."""
+        if not to_user:
+            raise WeComAPIError(-1, "touser 为空，无法发送消息", "message/send")
+
+        payload = {
+            "touser": to_user,
+            "msgtype": "text",
+            "agentid": int(agent_id or 0),
+            "text": {"content": content[:600]},
+            "safe": 0,
+        }
+
+        last_error: WeComAPIError | None = None
+        for attempt in range(2):
+            token = self.access_token(force=attempt > 0)
+            try:
+                response = self._http.post(
+                    "/cgi-bin/message/send",
+                    params={"access_token": token},
+                    json=payload,
+                )
+            except httpx.HTTPError as exc:
+                raise WeComAPIError(-1, f"发送消息失败: {exc}", "message/send") from exc
+
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise WeComAPIError(
+                    -1, f"message/send 返回非 JSON（HTTP {response.status_code}）", "message/send"
+                ) from exc
+
+            errcode = int(data.get("errcode", 0) or 0)
+            if errcode == 0:
+                return
+
+            last_error = WeComAPIError(
+                errcode, str(data.get("errmsg", "")), "message/send"
+            )
+            if errcode in TOKEN_ERROR_CODES and attempt == 0:
+                log.warning("access_token 失效，刷新后重发消息")
+                continue
+            raise last_error
+
+        raise last_error or WeComAPIError(-1, "发送消息失败", "message/send")
+
     # ------------------------------------------------------------------ media
     def download_media(self, media_id: str) -> DownloadedMedia:
         """Download a media object (image/file/voice/video) by media_id."""

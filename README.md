@@ -38,8 +38,9 @@
 - **触发方式**：`noop`（写 job 文件）/ `command`（跑本地脚本）/ `http`（POST webhook）/ `auto`（本地 AI 分类）。
 - **发票流水线**：单图多票自动分割、透视矫正、视觉模型提取、SQLite 入库、重复拦截、检查/报销状态、日期范围查询与合计。
 - **图片自动分类**：按内容路由到 `data/receipt` / `data/homework` / `data/other`。
+- **结果回复**：识别成功、重复、失败都会用应用消息回复发送人；失败时提示重新拍摄。
 - **可观测**：滚动日志、`/healthz` 队列统计、可选 `/api/messages` 调试接口。
-- **可离线验收**：`tools/demo_local.py` 用模拟企业微信服务跑通完整加密回调；81 个自动化测试。
+- **可离线验收**：`tools/demo_local.py` 用模拟企业微信服务跑通完整加密回调；96 个自动化测试。
 
 ---
 
@@ -176,6 +177,8 @@ ollama pull qwen2.5vl:7b
 | `WECOM_PROCESSOR_WEBHOOK_URL` | | `http` 模式的目标地址 |
 | `WECOM_OLLAMA_MODEL` | auto | 视觉模型，默认 `qwen2.5vl:7b` |
 | `WECOM_OLLAMA_BASE_URL` | | 默认 `http://127.0.0.1:11434` |
+| `WECOM_OLLAMA_NUM_CTX` | | 视觉模型上下文，默认 8192 |
+| `WECOM_NOTIFY_RESULTS` / `WECOM_NOTIFY_FAILURE` | | 是否把结果/失败原因回复给发送人，默认开启 |
 | `WECOM_RECEIPT_DIR` / `WECOM_HOMEWORK_DIR` / `WECOM_OTHER_DIR` | | 分类目录 |
 | `WECOM_INVOICE_DB` | | 发票库路径，默认 `data/invoices.sqlite3` |
 | `WECOM_DEFAULT_CURRENCY` | | 默认 `JPY` |
@@ -338,7 +341,7 @@ tools/
 ├─ check_ai.py     检查 Ollama 与视觉模型
 └─ gen_keys.py     生成 Token / EncodingAESKey
 
-tests/             81 个单元 + 端到端测试
+tests/             96 个单元 + 端到端测试
 docs/              后台配置指南 + 发票流水线文档
 ```
 
@@ -351,3 +354,4 @@ docs/              后台配置指南 + 发票流水线文档
 3. **归档与检索**：按发送人/日期/标签检索，月度报表。
 4. **通知**：处理完成后用企业微信 `message/send` 把识别结果推回给发送人。
 5. **多来源**：新增「微信客服」「会话内容存档」适配器，复用同一张 `messages` 表和下载器。
+6. **识别率提升**：少样本、版式模板与 LoRA 微调的取舍，见 [docs/recognition-tuning.md](docs/recognition-tuning.md)。

@@ -52,10 +52,12 @@ class OllamaClient:
         model: str,
         timeout: float = 300.0,
         keep_alive: str = "10m",
+        num_ctx: int = 8192,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.model = model
         self.keep_alive = keep_alive
+        self.num_ctx = num_ctx
         self._http = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=httpx.Timeout(timeout, connect=10.0),
@@ -96,7 +98,7 @@ class OllamaClient:
             "messages": messages,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_ctx": self.num_ctx},
             "keep_alive": self.keep_alive,
         }
 
@@ -121,10 +123,23 @@ class OllamaClient:
         except ValueError as exc:
             raise OllamaError("Ollama 返回了非 JSON 响应") from exc
 
-        content = str(data.get("message", {}).get("content", ""))
+        message = data.get("message", {}) or {}
+        content = str(message.get("content") or "").strip()
+        thinking = str(message.get("thinking") or "").strip()
+        if not content and thinking:
+            # Thinking models occasionally put everything in "thinking".
+            content = thinking
         if not content:
-            raise OllamaError("Ollama 返回了空内容")
+            raise OllamaError(
+                "Ollama 返回了空内容（通常是图片过大/上下文不足；"
+                "可调大 WECOM_OLLAMA_NUM_CTX，或换更小的图片/模型）"
+            )
 
+        log.debug(
+            "Ollama 完成: done_reason=%s eval_count=%s",
+            data.get("done_reason"),
+            data.get("eval_count"),
+        )
         result = extract_json_object(content)
         log.debug("Ollama 响应: %s", result)
         return result

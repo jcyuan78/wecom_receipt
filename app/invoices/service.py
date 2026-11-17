@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import shutil
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,17 @@ def _write_bytes(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def _job_date(job: Job) -> date:
+    raw = str(job.data.get("received_at") or "")
+    try:
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone()
+        return parsed.date()
+    except ValueError:
+        return date.today()
+
+
 class InvoiceService:
     def __init__(self, settings: Settings, ollama: OllamaClient, db: InvoiceDB) -> None:
         self.settings = settings
@@ -76,10 +87,17 @@ class InvoiceService:
         return self.root / "_duplicates"
 
     # ---------------------------------------------------------------- process
-    def process(self, job: Job, source: Path, image: Image.Image | None = None) -> dict[str, Any]:
+    def process(
+        self,
+        job: Job,
+        source: Path,
+        image: Image.Image | None = None,
+        analysis: Any = None,
+    ) -> dict[str, Any]:
         raw_bytes = source.read_bytes()
         source_sha = hashlib.sha256(raw_bytes).hexdigest()
         image = image or load_image(raw_bytes)
+        received_date = _job_date(job)
 
         original_path = self._keep_original(job, source)
         segments = segment_documents(
@@ -88,6 +106,8 @@ class InvoiceService:
             max_regions=self.settings.invoice_max_regions,
         )
         multi = len(segments) > 1
+        single = not multi
+        precomputed = analysis.fields if (single and analysis is not None) else None
 
         invoices: list[dict[str, Any]] = []
         duplicates: list[dict[str, Any]] = []
@@ -102,6 +122,9 @@ class InvoiceService:
                     multi=multi,
                     source_sha=source_sha,
                     original_path=original_path,
+                    received_date=received_date,
+                    fields_override=precomputed,
+                    ai_image=image if single else segment.image,
                 )
             except InvoiceProcessingError as exc:
                 failures.append({"segment": index, "error": str(exc)})
@@ -125,6 +148,9 @@ class InvoiceService:
                     multi=False,
                     source_sha=source_sha,
                     original_path=original_path,
+                    received_date=received_date,
+                    fields_override=None,
+                    ai_image=image,
                 )
             except InvoiceProcessingError as exc:
                 failures.append({"segment": -1, "error": str(exc)})
@@ -170,6 +196,9 @@ class InvoiceService:
         multi: bool,
         source_sha: str,
         original_path: str,
+        received_date: date | None = None,
+        fields_override: InvoiceFields | None = None,
+        ai_image: Image.Image | None = None,
     ) -> dict[str, Any]:
         jpeg = encode_jpeg(segment.image, 92)
         segment_sha = hashlib.sha256(jpeg).hexdigest()
@@ -180,11 +209,21 @@ class InvoiceService:
                 job, jpeg, index, multi, existing, reason="相同切片（sha256）"
             )
 
-        fields, rotation = extract_invoice(
-            self.ollama,
-            segment.image,
-            default_currency=self.settings.default_currency,
-        )
+        if (
+            fields_override is not None
+            and fields_override.invoice_date is not None
+            and fields_override.amount_minor is not None
+        ):
+            # Use the one-shot analysis of the original image; no re-OCR on the crop.
+            fields = fields_override
+            rotation = fields.rotation
+        else:
+            fields, rotation = extract_invoice(
+                self.ollama,
+                ai_image or segment.image,
+                default_currency=self.settings.default_currency,
+                received_date=received_date,
+            )
 
         if fields.invoice_no:
             existing = self.db.find_duplicate(fields.invoice_no, None)
@@ -201,6 +240,7 @@ class InvoiceService:
         needs_review = (
             not fields.is_complete
             or fields.confidence < self.settings.invoice_min_confidence
+            or fields.date_adjusted
         )
 
         today = date.today()

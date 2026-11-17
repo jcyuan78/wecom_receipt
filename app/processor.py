@@ -112,7 +112,12 @@ class HttpProcessor:
             raise ProcessorError(f"webhook 返回 HTTP {response.status_code}: {response.text[:500]}")
 
 
-def build_processor(settings: Settings, *, ollama_transport: httpx.BaseTransport | None = None):
+def build_processor(
+    settings: Settings,
+    *,
+    ollama_transport: httpx.BaseTransport | None = None,
+    wecom_client=None,
+):
     if settings.processor == "command":
         return CommandProcessor(settings.processor_command, settings.processor_timeout)
     if settings.processor == "http":
@@ -120,5 +125,9 @@ def build_processor(settings: Settings, *, ollama_transport: httpx.BaseTransport
     if settings.processor == "auto":
         from .pipeline import AutoProcessor
 
-        return AutoProcessor(settings, ollama_transport=ollama_transport)
+        return AutoProcessor(
+            settings,
+            ollama_transport=ollama_transport,
+            wecom_client=wecom_client,
+        )
     return NoopProcessor()

@@ -53,6 +53,8 @@ class Settings(BaseSettings):
 
     # --- Behaviour ---------------------------------------------------------
     auto_reply: str = "文件已收到，正在处理中。"
+    notify_results: bool = True
+    notify_failure: bool = True
 
     # --- Downstream processor ---------------------------------------------
     processor: Literal["noop", "command", "http", "auto"] = "noop"
@@ -65,6 +67,7 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5vl:7b"
     ollama_timeout: float = Field(default=300.0, gt=0)
     ollama_keep_alive: str = "10m"
+    ollama_num_ctx: int = Field(default=8192, ge=2048, le=131072)
 
     # --- Auto routing / invoice pipeline ----------------------------------
     receipt_dir: Path = Path("data/receipt")

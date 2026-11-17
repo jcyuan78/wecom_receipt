@@ -62,7 +62,9 @@ def create_app(
             transport=transport,
         )
         storage = FileStorage(settings.inbox_dir)
-        processor = build_processor(settings, ollama_transport=ollama_transport)
+        processor = build_processor(
+            settings, ollama_transport=ollama_transport, wecom_client=client
+        )
         worker = Worker(settings, store, storage, client, processor)
 
         app.state.ctx = AppContext(
