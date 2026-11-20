@@ -67,6 +67,7 @@ class WeComClient:
         timeout: float = 30.0,
         max_file_mb: int = 100,
         transport: httpx.BaseTransport | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> None:
         self._corp_id = corp_id
         self._secret = secret
@@ -79,7 +80,7 @@ class WeComClient:
             timeout=httpx.Timeout(timeout, read=max(timeout, 60.0)),
             transport=transport,
             follow_redirects=True,
-            headers={"User-Agent": "wecom-receiver/0.1"},
+            headers={"User-Agent": "wecom-receiver/0.1", **(extra_headers or {})},
         )
 
     def close(self) -> None:

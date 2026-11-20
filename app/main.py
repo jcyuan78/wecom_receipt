@@ -14,6 +14,7 @@ from .config import ConfigError, Settings
 from .crypto import WeComCrypto
 from .logging_setup import configure_logging
 from .processor import build_processor
+from .proxy import ProxyContext
 from .storage import FileStorage
 from .store import MessageStore
 from .worker import Worker
@@ -26,6 +27,7 @@ def create_app(
     *,
     transport: httpx.BaseTransport | None = None,
     ollama_transport: httpx.BaseTransport | None = None,
+    proxy_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Build the ASGI app.
 
@@ -44,6 +46,21 @@ def create_app(
             log.exception("启动配置校验失败")
             raise
 
+        if settings.mode == "proxy":
+            proxy_client = httpx.AsyncClient(
+                timeout=settings.debug_proxy_timeout,
+                transport=proxy_transport,
+                follow_redirects=False,
+            )
+            app.state.ctx = ProxyContext(settings=settings, client=proxy_client)
+            log.info("调试代理已启动: %s", settings.debug_proxy_target)
+            try:
+                yield
+            finally:
+                await proxy_client.aclose()
+                log.info("调试代理已停止")
+            return
+
         crypto = WeComCrypto(
             settings.callback_token, settings.callback_aes_key, settings.corp_id
         )
@@ -60,6 +77,11 @@ def create_app(
             timeout=settings.http_timeout,
             max_file_mb=settings.max_file_mb,
             transport=transport,
+            extra_headers=(
+                {"X-Debug-Token": settings.debug_proxy_token}
+                if settings.debug_proxy_token
+                else None
+            ),
         )
         storage = FileStorage(settings.inbox_dir)
         processor = build_processor(

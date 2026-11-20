@@ -14,6 +14,7 @@ from . import xmlmsg
 from .client import WeComClient
 from .config import Settings
 from .crypto import WeComCrypto, WeComCryptoError
+from .proxy import ProxyContext, forward_to
 from .storage import FileStorage
 from .store import MessageStore
 from .worker import Worker
@@ -32,20 +33,22 @@ class AppContext:
     worker: Worker
 
 
-def _ctx(request: Request) -> AppContext:
+def _ctx(request: Request) -> AppContext | ProxyContext:
     return request.app.state.ctx
 
 
 @router.get("/wecom/callback", response_class=PlainTextResponse)
-def verify_callback_url(
+async def verify_callback_url(
     request: Request,
     msg_signature: str = "",
     timestamp: str = "",
     nonce: str = "",
     echostr: str = "",
-) -> PlainTextResponse:
+) -> Response:
     """Answer the URL-verification request sent when saving the callback config."""
     ctx = _ctx(request)
+    if isinstance(ctx, ProxyContext):
+        return await forward_to(ctx, request)
     if not echostr:
         raise HTTPException(status_code=400, detail="缺少 echostr 参数")
     try:
@@ -69,6 +72,9 @@ async def receive_message(request: Request) -> Response:
     WeCom expects a response within 5 seconds.
     """
     ctx = _ctx(request)
+    if isinstance(ctx, ProxyContext):
+        return await forward_to(ctx, request)
+
     params = request.query_params
     body = (await request.body()).decode("utf-8", errors="replace")
 
@@ -128,6 +134,13 @@ async def receive_message(request: Request) -> Response:
 @router.get("/healthz")
 def healthz(request: Request) -> dict:
     ctx = _ctx(request)
+    if isinstance(ctx, ProxyContext):
+        return {
+            "status": "ok",
+            "mode": "proxy",
+            "target": ctx.settings.debug_proxy_target,
+            "time": int(time.time()),
+        }
     return {
         "status": "ok",
         "corp_id": ctx.settings.masked_corp_id(),
@@ -141,7 +154,31 @@ def healthz(request: Request) -> dict:
 def list_messages(request: Request, token: str = "", limit: int = 20) -> dict:
     """Small read-only debugging endpoint, protected by ``WECOM_ADMIN_TOKEN``."""
     ctx = _ctx(request)
+    if isinstance(ctx, ProxyContext):
+        raise HTTPException(status_code=403, detail="forbidden in proxy mode")
     if not ctx.settings.admin_token or not hmac.compare_digest(token, ctx.settings.admin_token):
         raise HTTPException(status_code=403, detail="forbidden")
     limit = max(1, min(limit, 100))
     return {"items": ctx.store.recent(limit), "stats": ctx.store.stats()}
+
+
+@router.api_route("/debug/wecom-api/{path:path}", methods=["GET", "POST"])
+async def debug_wecom_api(path: str, request: Request) -> Response:
+    """Forward a developer-machine WeCom API call to qyapi.
+
+    Only available in proxy mode and only with the shared debug token.
+    """
+    ctx = _ctx(request)
+    if not isinstance(ctx, ProxyContext):
+        raise HTTPException(status_code=404, detail="not found")
+    token = request.headers.get("X-Debug-Token", "")
+    if not hmac.compare_digest(token, ctx.settings.debug_proxy_token):
+        raise HTTPException(status_code=401, detail="invalid debug token")
+
+    return await forward_to(
+        ctx,
+        request,
+        target_base=ctx.settings.wecom_api_base,
+        path=path,
+        drop_headers=("x-debug-token",),
+    )

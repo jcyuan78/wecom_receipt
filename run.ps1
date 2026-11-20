@@ -29,4 +29,5 @@ if (-not $bindHost -and (Test-Path (Join-Path $PSScriptRoot ".env"))) {
 if (-not $bindHost) { $bindHost = "0.0.0.0" }
 
 Write-Host "监听 http://${bindHost}:$port/wecom/callback"
-& $python -m uvicorn app.main:app --host $bindHost --port $port
+# --no-access-log: 防止调试代理的 corpsecret/access_token 出现在访问日志
+& $python -m uvicorn app.main:app --host $bindHost --port $port --no-access-log

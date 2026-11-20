@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     invoice_max_regions: int = Field(default=6, ge=1, le=20)
     keep_original: bool = True
 
+    # --- Debug proxy -------------------------------------------------------
+    # mode=proxy: this server only forwards WeCom traffic to a dev machine.
+    mode: Literal["normal", "proxy"] = "normal"
+    debug_proxy_target: str = ""
+    debug_proxy_token: str = ""
+    debug_proxy_timeout: float = Field(default=120.0, gt=0)
+
     # --- Operations --------------------------------------------------------
     admin_token: str = ""
     log_level: str = "INFO"
@@ -121,6 +128,10 @@ class Settings(BaseSettings):
 
     def validate_for_runtime(self) -> None:
         """Validate the fields that are required to talk to WeCom."""
+        if self.mode == "proxy":
+            self.validate_proxy()
+            return
+
         missing = [
             name
             for name in ("corp_id", "agent_id", "app_secret", "callback_token", "callback_aes_key")
@@ -148,6 +159,17 @@ class Settings(BaseSettings):
         if len(self.corp_id) <= 6:
             return self.corp_id
         return f"{self.corp_id[:4]}***{self.corp_id[-2:]}"
+
+    def validate_proxy(self) -> None:
+        if not self.debug_proxy_target.strip():
+            raise ConfigError(
+                "WECOM_MODE=proxy 时必须配置 WECOM_DEBUG_PROXY_TARGET（开发机地址，"
+                "例如 http://192.168.1.23:8081）。"
+            )
+        if not self.debug_proxy_token.strip():
+            raise ConfigError(
+                "WECOM_MODE=proxy 时必须配置 WECOM_DEBUG_PROXY_TOKEN（服务器与开发机共享的调试令牌）。"
+            )
 
     @field_validator("default_currency")
     @classmethod

@@ -39,8 +39,9 @@
 - **发票流水线**：单图多票自动分割、透视矫正、视觉模型提取、SQLite 入库、重复拦截、检查/报销状态、日期范围查询与合计。
 - **图片自动分类**：按内容路由到 `data/receipt` / `data/homework` / `data/other`。
 - **结果回复**：识别成功、重复、失败都会用应用消息回复发送人；失败时提示重新拍摄。
+- **调试代理**：生产服务器只转发，开发机在内网跑完整流程，见 [docs/debug-proxy.md](docs/debug-proxy.md)。
 - **可观测**：滚动日志、`/healthz` 队列统计、可选 `/api/messages` 调试接口。
-- **可离线验收**：`tools/demo_local.py` 用模拟企业微信服务跑通完整加密回调；96 个自动化测试。
+- **可离线验收**：`tools/demo_local.py` 用模拟企业微信服务跑通完整加密回调；102 个自动化测试。
 
 ---
 
@@ -183,6 +184,8 @@ ollama pull qwen2.5vl:7b
 | `WECOM_INVOICE_DB` | | 发票库路径，默认 `data/invoices.sqlite3` |
 | `WECOM_DEFAULT_CURRENCY` | | 默认 `JPY` |
 | `WECOM_INVOICE_MAX_REGIONS` | | 单图最多拆几张发票，默认 6 |
+| `WECOM_MODE` | | `normal` / `proxy`（调试转发） |
+| `WECOM_DEBUG_PROXY_TARGET` / `WECOM_DEBUG_PROXY_TOKEN` | | proxy 模式：开发机地址与共享令牌 |
 | `WECOM_MAX_ATTEMPTS` | | 失败重试次数，默认 3 |
 | `WECOM_WORKER_ENABLED` | | 是否启动后台下载线程，默认 `true` |
 | `WECOM_ADMIN_TOKEN` | | 开启 `/api/messages` 调试接口 |
@@ -341,7 +344,7 @@ tools/
 ├─ check_ai.py     检查 Ollama 与视觉模型
 └─ gen_keys.py     生成 Token / EncodingAESKey
 
-tests/             96 个单元 + 端到端测试
+tests/             102 个单元 + 端到端测试
 docs/              后台配置指南 + 发票流水线文档
 ```
 
