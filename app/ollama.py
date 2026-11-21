@@ -76,12 +76,8 @@ class OllamaClient:
         data = response.json()
         return [str(item.get("name", "")) for item in data.get("models", [])]
 
-    def chat_json(
-        self,
-        prompt: str,
-        images: Sequence[bytes] = (),
-        *,
-        system: str | None = None,
+    def chat_json(self, prompt: str, images: Sequence[bytes] = (),
+        *, system: str | None = None,
     ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = []
         if system:
@@ -142,4 +138,64 @@ class OllamaClient:
         )
         result = extract_json_object(content)
         log.debug("Ollama 响应: %s", result)
+        return result
+
+    def generate_json(
+        self,
+        system_prompt: str,
+        prompt: str,
+    ) -> dict[str, Any]:
+        """Text-only JSON generation via Ollama's ``/api/generate``.
+
+        ``system_prompt`` is the instruction block and ``prompt`` is the user
+        text.  No images are accepted here; use :meth:`chat_json` for vision.
+        """
+        payload = {
+            "model": self.model,
+            "system": system_prompt,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0, "num_ctx": self.num_ctx},
+            "keep_alive": self.keep_alive,
+        }
+
+        try:
+            response = self._http.post("/api/generate", json=payload)
+        except httpx.HTTPError as exc:
+            raise OllamaError(
+                f"无法连接 Ollama（{self._http.base_url}），请确认 ollama serve 已启动: {exc}"
+            ) from exc
+
+        if response.status_code == 404:
+            raise OllamaError(
+                f"Ollama 中找不到模型 {self.model!r}，请先执行: ollama pull {self.model}"
+            )
+        if response.status_code >= 400:
+            raise OllamaError(
+                f"Ollama 返回 HTTP {response.status_code}: {response.text[:300]}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise OllamaError("Ollama 返回了非 JSON 响应") from exc
+
+        content = str(data.get("response") or "").strip()
+        thinking = str(data.get("thinking") or "").strip()
+        if not content and thinking:
+            # Some thinking models put the whole answer in "thinking".
+            content = thinking
+        if not content:
+            raise OllamaError(
+                "Ollama 返回了空内容（可调大 WECOM_OLLAMA_NUM_CTX 或重试）"
+            )
+
+        log.debug(
+            "Ollama generate 完成: done_reason=%s eval_count=%s",
+            data.get("done_reason"),
+            data.get("eval_count"),
+        )
+        result = extract_json_object(content)
+        log.debug("Ollama generate 响应: %s", result)
         return result

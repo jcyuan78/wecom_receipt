@@ -41,3 +41,46 @@ def test_empty_response_has_actionable_error():
     with pytest.raises(OllamaError) as exc:
         _client(handler).chat_json("read")
     assert "NUM_CTX" in str(exc.value)
+
+
+def test_generate_json_uses_generate_endpoint():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/generate"
+        body = json.loads(request.content)
+        seen.update(body)
+        return httpx.Response(
+            200,
+            json={"response": '{"action": "query_invoices"}', "done_reason": "stop"},
+        )
+
+    result = _client(handler).generate_json("SYSTEM RULES", "本月发票总额")
+    assert result == {"action": "query_invoices"}
+    assert seen["system"] == "SYSTEM RULES"
+    assert seen["prompt"] == "本月发票总额"
+    assert seen["format"] == "json"
+    assert seen["stream"] is False
+    assert seen["options"]["num_ctx"] == 4096
+
+
+def test_generate_json_keyword_arguments_and_thinking_fallback():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"response": "", "thinking": '{"ok": true}'},
+        )
+
+    result = _client(handler).generate_json(
+        system_prompt="SYSTEM", prompt="USER"
+    )
+    assert result == {"ok": True}
+
+
+def test_generate_json_empty_response_raises():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"response": ""})
+
+    with pytest.raises(OllamaError) as exc:
+        _client(handler).generate_json("SYSTEM", "USER")
+    assert "NUM_CTX" in str(exc.value)
