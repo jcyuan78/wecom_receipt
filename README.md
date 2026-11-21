@@ -25,6 +25,9 @@
 后台配置的完整步骤（含截图级菜单路径、内网穿透、排错）见：
 **[docs/wecom-backend-setup.md](docs/wecom-backend-setup.md)**
 
+代码结构、数据结构、各功能流程与关键函数调用链见：
+**[docs/code-guide.md](docs/code-guide.md)**
+
 ---
 
 ## 2. 已实现的能力
@@ -345,7 +348,7 @@ tools/
 └─ gen_keys.py     生成 Token / EncodingAESKey
 
 tests/             102 个单元 + 端到端测试
-docs/              后台配置指南 + 发票流水线文档
+docs/              代码说明、后台配置、发票流水线、调试代理、识别调优
 ```
 
 ---
