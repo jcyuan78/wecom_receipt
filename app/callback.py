@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hmac
-import logging
+from loguru import logger as log
 import time
 from dataclasses import dataclass
 
@@ -19,7 +19,6 @@ from .storage import FileStorage
 from .store import MessageStore
 from .worker import Worker
 
-log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -56,7 +55,7 @@ async def verify_callback_url(
             raise HTTPException(status_code=403, detail="签名校验失败")
         plain = ctx.crypto.decrypt(echostr)
     except WeComCryptoError as exc:
-        log.warning("URL 验证失败: %s", exc)
+        log.warning("URL 验证失败: {}", exc)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     log.info("URL 验证成功")
@@ -81,20 +80,20 @@ async def receive_message(request: Request) -> Response:
     try:
         encrypt = xmlmsg.extract_encrypt(body)
     except xmlmsg.MessageParseError as exc:
-        log.warning("无法解析回调报文: %s", exc)
+        log.warning("无法解析回调报文: {}", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not ctx.crypto.verify_signature(
         params.get("msg_signature", ""), params.get("timestamp", ""), params.get("nonce", ""), encrypt
     ):
-        log.warning("回调签名校验失败（remote=%s）", request.client.host if request.client else "?")
+        log.warning("回调签名校验失败（remote={}）", request.client.host if request.client else "?")
         raise HTTPException(status_code=403, detail="签名校验失败")
 
     try:
         plain = ctx.crypto.decrypt(encrypt)
         message = xmlmsg.parse_message(plain)
     except (WeComCryptoError, xmlmsg.MessageParseError) as exc:
-        log.warning("回调解密/解析失败: %s", exc)
+        log.warning("回调解密/解析失败: {}", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
@@ -104,11 +103,11 @@ async def receive_message(request: Request) -> Response:
         raise HTTPException(status_code=500, detail="内部错误") from exc
 
     if not is_new:
-        log.info("重复消息已忽略 msg_id=%s", message.msg_id)
+        log.info("重复消息已忽略 msg_id={}", message.msg_id)
         return Response(status_code=200)
 
     log.info(
-        "收到消息 type=%s from=%s msg_id=%s media_id=%s",
+        "收到消息 type={} from={} msg_id={} media_id={}",
         message.msg_type,
         message.from_user,
         message.msg_id,

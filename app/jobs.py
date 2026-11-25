@@ -8,13 +8,12 @@ the file from ``data/jobs/`` or receive the document via HTTP / a command.
 from __future__ import annotations
 
 import json
-import logging
+from loguru import logger as log
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
 
 JOB_SCHEMA = "wecom.receiver.job/v1"
 

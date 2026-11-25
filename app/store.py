@@ -13,7 +13,7 @@ One row per inbound WeCom message.  The row doubles as the work queue:
 from __future__ import annotations
 
 import json
-import logging
+from loguru import logger as log
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -21,7 +21,6 @@ from pathlib import Path
 
 from .models import Message
 
-log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -192,7 +191,7 @@ class MessageStore:
                 "UPDATE messages SET status = ?, attempts = ?, error = ?, next_attempt_at = ?, updated_at = ? WHERE msg_id = ?",
                 (status, attempts, error[:2000], next_attempt, iso(now), msg_id),
             )
-        log.warning("消息 %s 处理失败（第 %d 次）: %s", msg_id, attempts, error)
+        log.warning("消息 {} 处理失败（第 {} 次）: {}", msg_id, attempts, error)
         return status
 
     def mark_permanent_failure(self, msg_id: str, error: str) -> None:
@@ -201,7 +200,7 @@ class MessageStore:
                 "UPDATE messages SET status = 'failed', error = ?, next_attempt_at = NULL, updated_at = ? WHERE msg_id = ?",
                 (error[:2000], iso(utcnow()), msg_id),
             )
-        log.error("消息 %s 永久失败: %s", msg_id, error)
+        log.error("消息 {} 永久失败: {}", msg_id, error)
 
     def reset_stuck(self, older_than_seconds: int = 600) -> int:
         """Return rows stuck in ``working`` (e.g. after a crash) to the queue."""

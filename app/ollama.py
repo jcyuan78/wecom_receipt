@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
+from loguru import logger as log
 from typing import Any, Sequence
 
 import httpx
 
-log = logging.getLogger(__name__)
 
 
 class OllamaError(RuntimeError):
@@ -132,12 +131,12 @@ class OllamaClient:
             )
 
         log.debug(
-            "Ollama 完成: done_reason=%s eval_count=%s",
+            "Ollama 完成: done_reason={} eval_count={}",
             data.get("done_reason"),
             data.get("eval_count"),
         )
         result = extract_json_object(content)
-        log.debug("Ollama 响应: %s", result)
+        log.debug("Ollama 响应: {}", result)
         return result
 
     def generate_json(
@@ -192,10 +191,10 @@ class OllamaClient:
             )
 
         log.debug(
-            "Ollama generate 完成: done_reason=%s eval_count=%s",
+            "Ollama generate 完成: done_reason={} eval_count={}",
             data.get("done_reason"),
             data.get("eval_count"),
         )
         result = extract_json_object(content)
-        log.debug("Ollama generate 响应: %s", result)
+        log.debug("Ollama generate 响应: {}", result)
         return result

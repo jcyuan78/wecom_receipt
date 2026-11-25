@@ -7,7 +7,7 @@ recognition result.
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 from dataclasses import dataclass
 from datetime import date
 
@@ -18,7 +18,6 @@ from .invoices import parsing
 from .invoices.extract import InvoiceFields, fields_from_dict
 from .ollama import OllamaClient
 
-log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a precise document router and OCR assistant. "
@@ -125,7 +124,7 @@ class Classifier:
         reason = str(data.get("reason", ""))[:200]
 
         log.info(
-            "图片分析: %s (%.2f) %s | 发票=%s 日期=%s 金额=%s",
+            "图片分析: {} ({:.2f}) {} | 发票={} 日期={} 金额={}",
             category,
             confidence,
             reason,

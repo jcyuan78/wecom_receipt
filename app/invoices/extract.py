@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -14,7 +14,6 @@ from ..ollama import OllamaClient
 from . import parsing
 from .dates import resolve_invoice_date
 
-log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a precise OCR assistant for financial documents. "
@@ -200,7 +199,7 @@ def extract_invoice(
             best, best_rotation = retry, rotation
 
     log.info(
-        "发票识别: no=%s date=%s(adjusted=%s) amount=%s vendor=%s confidence=%.2f rotation=%s",
+        "发票识别: no={} date={}(adjusted={}) amount={} vendor={} confidence={:.2f} rotation={}",
         best.invoice_no,
         best.invoice_date,
         best.date_adjusted,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 from contextlib import asynccontextmanager
 
 import httpx
@@ -19,7 +19,6 @@ from .storage import FileStorage
 from .store import MessageStore
 from .worker import Worker
 
-log = logging.getLogger(__name__)
 
 
 def create_app(
@@ -53,7 +52,7 @@ def create_app(
                 follow_redirects=False,
             )
             app.state.ctx = ProxyContext(settings=settings, client=proxy_client)
-            log.info("调试代理已启动: %s", settings.debug_proxy_target)
+            log.info("调试代理已启动: {}", settings.debug_proxy_target)
             try:
                 yield
             finally:
@@ -68,7 +67,7 @@ def create_app(
         store.init()
         recovered = store.reset_stuck()
         if recovered:
-            log.warning("恢复了 %d 条上次未完成的任务", recovered)
+            log.warning("恢复了 {} 条上次未完成的任务", recovered)
 
         client = WeComClient(
             corp_id=settings.corp_id,
@@ -101,7 +100,7 @@ def create_app(
         if settings.worker_enabled:
             worker.start()
         log.info(
-            "服务已启动 corp=%s processor=%s worker=%s",
+            "服务已启动 corp={} processor={} worker={}",
             settings.masked_corp_id(),
             settings.processor,
             "on" if settings.worker_enabled else "off",

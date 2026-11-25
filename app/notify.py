@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 from collections import defaultdict
 from typing import Any
 
@@ -10,7 +10,6 @@ from .client import WeComClient
 from .config import Settings
 from .invoices.parsing import format_money
 
-log = logging.getLogger(__name__)
 
 
 class ResultNotifier:
@@ -27,9 +26,9 @@ class ResultNotifier:
                 text,
                 agent_id=int(self.settings.agent_id or 0),
             )
-            log.info("已回复 %s: %s", to_user, text.replace("\n", " / ")[:120])
+            log.info("已回复 {}: {}", to_user, text.replace("\n", " / ")[:120])
         except Exception:  # noqa: BLE001 - notifications must never fail the job
-            log.warning("回复企业微信用户失败（不影响入库）: %s", to_user, exc_info=True)
+            log.opt(exception=True).warning("回复企业微信用户失败（不影响入库）: {}", to_user)
 
     def invoice_result(self, job_data: dict[str, Any], outcome: dict[str, Any]) -> None:
         if not self.settings.notify_results:
@@ -88,7 +87,7 @@ class ResultNotifier:
     def invoice_failure(self, to_user: str, error: str) -> None:
         if not self.settings.notify_failure:
             return
-        log.warning("通知用户识别失败: %s (%s)", to_user, error)
+        log.warning("通知用户识别失败: {} ({})", to_user, error)
         self._send(
             to_user,
             "❌ 发票识别失败，请重新拍摄后发送。\n"

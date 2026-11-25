@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 import shutil
 from datetime import date, datetime
 from pathlib import Path
@@ -21,7 +21,6 @@ from .ollama import OllamaClient
 from .processor import Job
 from .storage import safe_filename
 
-log = logging.getLogger(__name__)
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 
@@ -84,7 +83,7 @@ class AutoProcessor:
             try:
                 image = load_image(source)
             except (UnidentifiedImageError, OSError):
-                log.warning("无法读取图片，归入 other: %s", source)
+                log.warning("无法读取图片，归入 other: {}", source)
                 outcome = self._move(job, source, self.settings.other_dir, "other")
             else:
                 analysis = self.classifier.analyze(
@@ -125,7 +124,7 @@ class AutoProcessor:
         name = safe_filename(f"{job.msg_id}_{source.name}")
         target = _unique_path(folder / name)
         shutil.move(str(source), target)
-        log.info("已归类 %s -> %s", category, target)
+        log.info("已归类 {} -> {}", category, target)
         return {
             "category": category,
             "duplicate": False,
@@ -141,7 +140,7 @@ class AutoProcessor:
             job.data.setdefault("file", {})["path"] = str(new_path)
             job.data["file"]["name"] = Path(new_path).name
         write_job(job.path.parent, job.data)
-        log.info("任务 %s 已更新: %s", job.msg_id, new_path or "-")
+        log.info("任务 {} 已更新: {}", job.msg_id, new_path or "-")
 
     def close(self) -> None:
         self.db.close()

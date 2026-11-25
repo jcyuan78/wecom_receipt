@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import logging
+from loguru import logger as log
 import re
 import threading
 import time
@@ -13,7 +13,6 @@ import httpx
 
 from .models import DownloadedMedia
 
-log = logging.getLogger(__name__)
 
 TOKEN_ERROR_CODES = {40014, 42001, 41001, 40001}
 _FILENAME_STAR_RE = re.compile(r"filename\*\s*=\s*([^;]+)", re.IGNORECASE)
@@ -120,7 +119,7 @@ class WeComClient:
         expires_in = int(data.get("expires_in", 7200) or 7200)
         self._token = token
         self._token_expires_at = time.monotonic() + max(60, expires_in - 300)
-        log.info("已获取 access_token（有效期 %ss）", expires_in)
+        log.info("已获取 access_token（有效期 {}s）", expires_in)
         return token
 
     def access_token(self, force: bool = False) -> str:
@@ -188,7 +187,7 @@ class WeComClient:
             except WeComAPIError as exc:
                 last_error = exc
                 if exc.errcode in TOKEN_ERROR_CODES and attempt == 0:
-                    log.warning("access_token 失效（errcode=%s），将刷新后重试", exc.errcode)
+                    log.warning("access_token 失效（errcode={}），将刷新后重试", exc.errcode)
                     continue
                 raise
 

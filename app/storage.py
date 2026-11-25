@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
+from loguru import logger as log
 import os
 import re
 from datetime import datetime
@@ -12,7 +12,6 @@ from pathlib import Path
 
 from .models import DownloadedMedia, Message, SavedFile
 
-log = logging.getLogger(__name__)
 
 _INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_NAMES = {
@@ -108,7 +107,7 @@ class FileStorage:
         if not Path(resolved).is_relative_to(self.root.resolve()):
             raise RuntimeError(f"文件路径越界: {resolved}")
 
-        log.info("已保存文件 %s (%d bytes, sha256=%s)", resolved, len(media.content), digest[:12])
+        log.info("已保存文件 {} ({} bytes, sha256={})", resolved, len(media.content), digest[:12])
         return SavedFile(
             path=resolved,
             name=path.name,

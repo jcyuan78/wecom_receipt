@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
+from loguru import logger as log
 import os
 import shutil
 from datetime import date, datetime, timedelta
@@ -33,7 +33,6 @@ from .db import DuplicateInvoiceError, InvoiceDB
 from .extract import InvoiceFields, extract_invoice
 from .parsing import format_money
 
-log = logging.getLogger(__name__)
 
 
 class InvoiceProcessingError(RuntimeError):
@@ -128,7 +127,7 @@ class InvoiceService:
                 )
             except InvoiceProcessingError as exc:
                 failures.append({"segment": index, "error": str(exc)})
-                log.warning("第 %d 张发票识别失败: %s", index + 1, exc)
+                log.warning("第 {} 张发票识别失败: {}", index + 1, exc)
                 continue
 
             if outcome["duplicate"]:
@@ -168,7 +167,7 @@ class InvoiceService:
 
         primary = invoices[0] if invoices else duplicates[0]
         log.info(
-            "消息 %s: 检测到 %d 张，新增 %d 张，重复 %d 张，失败 %d 张",
+            "消息 {}: 检测到 {} 张，新增 {} 张，重复 {} 张，失败 {} 张",
             job.msg_id,
             len(segments),
             len(invoices),
@@ -245,10 +244,10 @@ class InvoiceService:
 
         today = date.today()
         if not (date(1990, 1, 1) <= fields.invoice_date <= today + timedelta(days=366)):
-            log.warning("发票日期异常: %s（可能识别错误）", fields.invoice_date)
+            log.warning("发票日期异常: {}（可能识别错误）", fields.invoice_date)
             needs_review = True
         if fields.amount_minor <= 0:
-            log.warning("发票金额异常: %s", fields.amount_minor)
+            log.warning("发票金额异常: {}", fields.amount_minor)
             needs_review = True
 
         target = self._save_image(fields, jpeg, index=index, multi=multi, segment_sha=segment_sha)
@@ -303,7 +302,7 @@ class InvoiceService:
             "original_path": original_path,
         }
         log.info(
-            "发票已入库 #%s %s %s %s（第 %d 张，%s）",
+            "发票已入库 #{} {} {} {}（第 {} 张，{}）",
             record_id,
             fields.invoice_date,
             fields.vendor or "-",
@@ -351,7 +350,7 @@ class InvoiceService:
         try:
             source.unlink(missing_ok=True)
         except OSError:
-            log.warning("删除 inbox 原文件失败: %s", source, exc_info=True)
+            log.opt(exception=True).warning("删除 inbox 原文件失败: {}", source)
 
     def _duplicate_target(self, job: Job, index: int, multi: bool) -> Path:
         self.duplicates_dir.mkdir(parents=True, exist_ok=True)
@@ -371,7 +370,7 @@ class InvoiceService:
         target = self._duplicate_target(job, index, multi)
         _write_bytes(target, jpeg)
         log.warning(
-            "重复发票，已移入 %s（原因: %s，原记录 #%s %s）",
+            "重复发票，已移入 {}（原因: {}，原记录 #{} {}）",
             target,
             reason,
             existing.get("id"),

@@ -8,7 +8,7 @@ a public IP or the production egress IP.
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 from dataclasses import dataclass
 
 import httpx
@@ -16,7 +16,6 @@ from fastapi import HTTPException, Request, Response
 
 from .config import Settings
 
-log = logging.getLogger(__name__)
 
 _HOP_BY_HOP = {
     "connection",
@@ -82,7 +81,7 @@ async def forward_to(
             headers=headers,
         )
     except httpx.HTTPError as exc:
-        log.warning("调试转发失败 %s %s: %s", request.method, target_path, exc)
+        log.warning("调试转发失败 {} {}: {}", request.method, target_path, exc)
         raise HTTPException(status_code=502, detail=f"调试目标不可达: {exc}") from exc
 
     response_headers = {

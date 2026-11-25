@@ -1,18 +1,43 @@
-"""Logging configuration.
+"""Logging configuration based on loguru.
 
-Logs go to stdout and to ``data/logs/receiver.log`` (rotating).
+Application logs use ``from loguru import logger as log`` directly.  Uvicorn,
+httpx and other stdlib-logging libraries are intercepted and forwarded to the
+same loguru sinks.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
+
+from loguru import logger
 
 from .config import Settings
 
 _CONFIGURED = False
-_FORMAT = "%(asctime)s %(levelname)-7s %(name)s | %(message)s"
+_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
+    "{name}:{function}:{line} - {message}"
+)
+
+
+class _InterceptHandler(logging.Handler):
+    """Forward stdlib logging records to loguru."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except (ValueError, TypeError):
+            level = record.levelno
+
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
 
 
 def configure_logging(settings: Settings) -> None:
@@ -27,28 +52,48 @@ def configure_logging(settings: Settings) -> None:
         except (AttributeError, ValueError, OSError):
             pass
 
-    level = getattr(logging, settings.log_level.upper(), logging.INFO)
-    root = logging.getLogger()
-    root.setLevel(level)
-    formatter = logging.Formatter(_FORMAT)
+    level = settings.log_level.upper()
+    if level not in {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"}:
+        level = "INFO"
 
-    stream = logging.StreamHandler(sys.stdout)
-    stream.setFormatter(formatter)
-    root.addHandler(stream)
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        level=level,
+        format=_FORMAT,
+        colorize=True,
+        backtrace=False,
+        diagnose=False,
+        enqueue=False,
+    )
 
     try:
         settings.logs_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = RotatingFileHandler(
+        logger.add(
             settings.logs_dir / "receiver.log",
-            maxBytes=5 * 1024 * 1024,
-            backupCount=5,
+            level=level,
+            format=_FORMAT,
+            rotation="5 MB",
+            retention=5,
             encoding="utf-8",
+            enqueue=True,
+            backtrace=False,
+            diagnose=False,
         )
-        file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
     except OSError:
-        logging.getLogger(__name__).warning("无法创建日志文件，仅输出到控制台", exc_info=True)
+        logger.warning("无法创建日志文件，仅输出到控制台")
+
+    # Route uvicorn / httpx / other stdlib logging through loguru.
+    root = logging.getLogger()
+    root.handlers = [_InterceptHandler()]
+    root.setLevel(logging.DEBUG)
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx", "httpcore"):
+        std_logger = logging.getLogger(name)
+        std_logger.handlers = [_InterceptHandler()]
+        std_logger.propagate = False
 
     # httpx logs every request at INFO which is noisy for a long-running service.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     _CONFIGURED = True

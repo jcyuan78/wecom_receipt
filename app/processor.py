@@ -12,7 +12,7 @@ back-off (see :mod:`app.store`).
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 import os
 import subprocess
 from dataclasses import dataclass
@@ -22,7 +22,6 @@ import httpx
 
 from .config import Settings
 
-log = logging.getLogger(__name__)
 
 
 class ProcessorError(RuntimeError):
@@ -62,7 +61,7 @@ class Job:
 
 class NoopProcessor:
     def __call__(self, job: Job) -> None:
-        log.info("noop 处理器：文件已就绪 %s（job: %s）", job.file_path, job.path)
+        log.info("noop 处理器：文件已就绪 {}（job: {}）", job.file_path, job.path)
 
 
 class CommandProcessor:
@@ -71,7 +70,7 @@ class CommandProcessor:
         self.timeout = timeout
 
     def __call__(self, job: Job) -> None:
-        log.info("执行处理器命令: %s", self.command)
+        log.info("执行处理器命令: {}", self.command)
         try:
             result = subprocess.run(
                 self.command,
@@ -90,9 +89,9 @@ class CommandProcessor:
             raise ProcessorError(f"无法启动处理器命令: {exc}") from exc
 
         if result.stdout.strip():
-            log.info("处理器输出: %s", result.stdout.strip()[:4000])
+            log.info("处理器输出: {}", result.stdout.strip()[:4000])
         if result.stderr.strip():
-            log.warning("处理器 stderr: %s", result.stderr.strip()[:4000])
+            log.warning("处理器 stderr: {}", result.stderr.strip()[:4000])
         if result.returncode != 0:
             raise ProcessorError(f"处理器命令退出码 {result.returncode}")
 
@@ -103,7 +102,7 @@ class HttpProcessor:
         self.timeout = timeout
 
     def __call__(self, job: Job) -> None:
-        log.info("POST job 到 %s", self.url)
+        log.info("POST job 到 {}", self.url)
         try:
             response = httpx.post(self.url, json={**job.data, "job_path": str(job.path)}, timeout=self.timeout)
         except httpx.HTTPError as exc:

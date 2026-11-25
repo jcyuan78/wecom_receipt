@@ -9,7 +9,7 @@ single-document behaviour.
 from __future__ import annotations
 
 import io
-import logging
+from loguru import logger as log
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +18,6 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-log = logging.getLogger(__name__)
 
 Image.MAX_IMAGE_PIXELS = 80_000_000
 
@@ -329,7 +328,7 @@ def rectify_document(image: Image.Image, max_side: int = 2200) -> RectifyResult:
         result = _rectify_with_quad(original, quads[0], max_side)
         if result is not None:
             log.info(
-                "发票矫正: %s -> %s, 透视=True, 倾斜=%.1f°",
+                "发票矫正: {} -> {}, 透视=True, 倾斜={:.1f}°",
                 original.size,
                 result.output_size,
                 result.deskew_angle,
@@ -338,7 +337,7 @@ def rectify_document(image: Image.Image, max_side: int = 2200) -> RectifyResult:
 
     result = _finish(original, False, original.size, max_side)
     log.info(
-        "发票矫正: %s -> %s, 透视=False, 倾斜=%.1f°",
+        "发票矫正: {} -> {}, 透视=False, 倾斜={:.1f}°",
         original.size,
         result.output_size,
         result.deskew_angle,
@@ -368,7 +367,7 @@ def segment_documents(
         return [_finish(original, False, original.size, max_side)]
 
     log.info(
-        "检测到 %d 张票据（原图 %s），输出尺寸 %s",
+        "检测到 {} 张票据（原图 {}），输出尺寸 {}",
         len(results),
         original.size,
         [item.output_size for item in results],

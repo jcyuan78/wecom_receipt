@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from loguru import logger as log
 import threading
 from datetime import datetime
 
@@ -14,7 +14,6 @@ from .processor import Job
 from .storage import FileStorage
 from .store import MessageStore
 
-log = logging.getLogger(__name__)
 
 
 class Worker(threading.Thread):
@@ -77,7 +76,7 @@ class Worker(threading.Thread):
             job_path = write_job(self.settings.jobs_dir, job_data)
             self.processor(Job(job_data, job_path))
             self.store.mark_done(msg_id)
-            log.info("消息 %s 处理完成（%s）", msg_id, row.get("filename"))
+            log.info("消息 {} 处理完成（{}）", msg_id, row.get("filename"))
         except MediaTooLarge as exc:
             self.store.mark_permanent_failure(msg_id, str(exc))
             self._notify_failure(row, str(exc))
@@ -94,14 +93,14 @@ class Worker(threading.Thread):
         try:
             handler(row, error)
         except Exception:  # noqa: BLE001 - never fail the worker on a notification
-            log.warning("发送失败通知时出错", exc_info=True)
+            log.opt(exception=True).warning("发送失败通知时出错")
 
     def _download(self, row: dict):
         media_id = row.get("media_id")
         if not media_id:
             raise MediaTooLarge("消息没有 media_id，无法下载")
 
-        log.info("下载媒体 msg=%s media_id=%s", row["msg_id"], media_id)
+        log.info("下载媒体 msg={} media_id={}", row["msg_id"], media_id)
         media = self.client.download_media(media_id)
 
         message = Message(
