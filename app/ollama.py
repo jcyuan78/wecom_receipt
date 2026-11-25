@@ -139,25 +139,23 @@ class OllamaClient:
         log.debug("Ollama 响应: {}", result)
         return result
 
-    def generate_json(
+    def _generate(
         self,
         system_prompt: str,
         prompt: str,
-    ) -> dict[str, Any]:
-        """Text-only JSON generation via Ollama's ``/api/generate``.
-
-        ``system_prompt`` is the instruction block and ``prompt`` is the user
-        text.  No images are accepted here; use :meth:`chat_json` for vision.
-        """
-        payload = {
+        *,
+        json_mode: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        payload: dict[str, Any] = {
             "model": self.model,
             "system": system_prompt,
             "prompt": prompt,
             "stream": False,
-            "format": "json",
             "options": {"temperature": 0, "num_ctx": self.num_ctx},
             "keep_alive": self.keep_alive,
         }
+        if json_mode:
+            payload["format"] = "json"
 
         try:
             response = self._http.post("/api/generate", json=payload)
@@ -195,6 +193,25 @@ class OllamaClient:
             data.get("done_reason"),
             data.get("eval_count"),
         )
+        return content, data
+
+    def generate_json(
+        self,
+        system_prompt: str,
+        prompt: str,
+    ) -> dict[str, Any]:
+        """Text-only JSON generation via Ollama's ``/api/generate``.
+
+        ``system_prompt`` is the instruction block and ``prompt`` is the user
+        text.  No images are accepted here; use :meth:`chat_json` for vision.
+        """
+        content, _ = self._generate(system_prompt, prompt, json_mode=True)
         result = extract_json_object(content)
-        log.debug("Ollama generate 响应: {}", result)
+        log.debug("Ollama generate JSON 响应: {}", result)
         return result
+
+    def generate_text(self, system_prompt: str, prompt: str) -> str:
+        """Text-only free-form generation via ``/api/generate``."""
+        content, _ = self._generate(system_prompt, prompt, json_mode=False)
+        log.debug("Ollama generate 文本响应: {}", content[:500])
+        return content

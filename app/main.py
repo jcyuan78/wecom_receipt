@@ -28,11 +28,9 @@ def create_app(
     ollama_transport: httpx.BaseTransport | None = None,
     proxy_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
-    """Build the ASGI app.
-
-    ``transport`` / ``ollama_transport`` are only used by tests to stub the
-    WeCom and Ollama HTTP APIs.
-    """
+    # Build the ASGI app.
+    # ``transport`` / ``ollama_transport`` are only used by tests to stub the
+    # WeCom and Ollama HTTP APIs.
     settings = settings or Settings()
 
     @asynccontextmanager
@@ -125,6 +123,5 @@ def create_app(
     )
     app.include_router(router)
     return app
-
 
 app = create_app()

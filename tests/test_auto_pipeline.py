@@ -71,7 +71,9 @@ def test_single_receipt_is_routed_extracted_and_stored():
         assert record["amount_minor"] == 3280
         assert record["currency"] == "JPY"
         assert record["vendor"] == "テスト商店"
-        assert record["checked"] is False
+        assert record["status"] == "reviewed"
+        assert record["source"] == "invoice"
+        assert record["checked"] is True
         assert record["reimbursed"] is False
         assert record["needs_review"] is False
         assert record["source_msg_id"] == "5001"
@@ -268,6 +270,7 @@ def test_low_confidence_marks_needs_review():
 
         db = _open_db(settings)
         record = db.query(date(2026, 1, 1), date(2026, 12, 31))[0]
+        assert record["status"] == "review"
         assert record["needs_review"] is True
         db.close()
 

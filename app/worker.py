@@ -53,12 +53,29 @@ class Worker(threading.Thread):
     # ---------------------------------------------------------------- work
     def process_once(self) -> int:
         rows = self.store.claim_due(limit=5)
+        #log.debug(f"后台处理任务轮询，共 {len(rows)} 个任务")
         for row in rows:
             self._handle(row)
         return len(rows)
 
     def _handle(self, row: dict) -> None:
         msg_id = row["msg_id"]
+        msg_type = row["msg_type"]
+        log.debug(f"后台处理消息 {msg_id} type={msg_type} status={row['status']} attempts={row['attempts']}")
+        if msg_type == "text":
+            try:
+                job_data = build_job(row)
+                job_path = write_job(self.settings.jobs_dir, job_data)
+                self.processor(Job(job_data, job_path))
+                self.store.mark_done(msg_id)
+                log.info("文字消息 {} 处理完成", msg_id)
+            except Exception as exc:  # noqa: BLE001
+                error = f"{type(exc).__name__}: {exc}"
+                status = self.store.mark_retry(msg_id, error)
+                if status == "failed":
+                    self._notify_failure(row, error)
+            return
+
         try:
             if not row.get("file_path"):
                 saved = self._download(row)
@@ -85,6 +102,12 @@ class Worker(threading.Thread):
             status = self.store.mark_retry(msg_id, error)
             if status == "failed":
                 self._notify_failure(row, error)
+
+    # def _handle_text(self, row: dict) -> None:
+    #     msg_id = row["msg_id"]
+    #     content = row.get("content")
+    #     log.info(f"处理文字消息 {msg_id} 内容: {content}")
+    #     #self.store.mark_done(msg_id)
 
     def _notify_failure(self, row: dict, error: str) -> None:
         handler = getattr(self.processor, "notify_failure", None)

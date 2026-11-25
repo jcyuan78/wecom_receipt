@@ -29,7 +29,7 @@ from ..imaging import (
 from ..ollama import OllamaClient
 from ..processor import Job
 from ..storage import safe_filename
-from .db import DuplicateInvoiceError, InvoiceDB
+from .db import STATUS_LABELS, DuplicateInvoiceError, InvoiceDB
 from .extract import InvoiceFields, extract_invoice
 from .parsing import format_money
 
@@ -250,6 +250,7 @@ class InvoiceService:
             log.warning("发票金额异常: {}", fields.amount_minor)
             needs_review = True
 
+        status = "review" if needs_review else "reviewed"
         target = self._save_image(fields, jpeg, index=index, multi=multi, segment_sha=segment_sha)
 
         try:
@@ -271,6 +272,8 @@ class InvoiceService:
                 ai_confidence=fields.confidence,
                 needs_review=needs_review,
                 raw=fields.raw,
+                status=status,
+                source="invoice",
             )
         except DuplicateInvoiceError as exc:
             target.unlink(missing_ok=True)
@@ -293,6 +296,9 @@ class InvoiceService:
             "currency": fields.currency,
             "vendor": fields.vendor,
             "needs_review": needs_review,
+            "status": status,
+            "status_label": STATUS_LABELS.get(status, status),
+            "source": "invoice",
             "confidence": fields.confidence,
             "rotation": rotation,
             "deskew_angle": round(segment.deskew_angle, 2),

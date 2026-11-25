@@ -168,22 +168,32 @@ class TestInvoiceDB:
     def test_status_flags(self):
         db = _db("status")
         record_id = _add(db)
-        assert db.get(record_id)["checked"] is False
-
-        db.set_status(record_id, checked=True)
         row = db.get(record_id)
+        assert row["status"] == "reviewed"
+        assert row["checked"] is True
+
+        db.set_status(record_id, status="review")
+        row = db.get(record_id)
+        assert row["status"] == "review"
+        assert row["checked"] is False
+        assert row["needs_review"] is True
+
+        db.set_status(record_id, status="reviewed")
+        row = db.get(record_id)
+        assert row["status"] == "reviewed"
         assert row["checked"] is True
         assert row["checked_at"]
 
-        db.set_status(record_id, reimbursed=True)
+        db.set_status(record_id, status="reimbursed")
         row = db.get(record_id)
+        assert row["status"] == "reimbursed"
         assert row["reimbursed"] is True
         assert row["reimbursed_at"]
 
-        db.set_status(record_id, checked=False, reimbursed=False)
+        db.set_status(record_id, status="reviewed")
         row = db.get(record_id)
-        assert row["checked"] is False
-        assert row["checked_at"] is None
+        assert row["status"] == "reviewed"
+        assert row["reimbursed"] is False
         db.close()
 
     def test_filters(self):
@@ -266,6 +276,8 @@ class TestCLI:
         assert migrated is not None
         assert migrated["segment_sha256"] == "oldsha"
         assert migrated["segment_index"] == 0
+        assert migrated["status"] == "reviewed"
+        assert migrated["source"] == "invoice"
 
         # A multi-invoice photo reuses source_sha256 across segments.
         record_id = db.add(
@@ -322,7 +334,7 @@ class TestCLI:
 
         code = cli_main(["--db", str(db.path), "mark", str(record_id), "--checked"])
         assert code == 0
-        assert "检查=是" in capsys.readouterr().out
+        assert "状态=已校对" in capsys.readouterr().out
 
         code = cli_main(["--db", str(db.path), "show", str(record_id)])
         shown = json.loads(capsys.readouterr().out)

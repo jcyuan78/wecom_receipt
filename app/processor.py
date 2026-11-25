@@ -41,6 +41,10 @@ class Job:
     def file_path(self) -> str:
         return str(self.data["file"]["path"])
 
+    @property
+    def job_type(self) -> str:
+        return str(self.data["msg_type"])
+
     def env(self) -> dict[str, str]:
         env = os.environ.copy()
         env.update(

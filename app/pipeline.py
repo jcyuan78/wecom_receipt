@@ -20,6 +20,7 @@ from .notify import ResultNotifier
 from .ollama import OllamaClient
 from .processor import Job
 from .storage import safe_filename
+from .textmsg_processor import TextMessageProcessor
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
@@ -47,14 +48,9 @@ def _received_date(job: Job) -> date:
 
 
 class AutoProcessor:
-    """Used with ``WECOM_PROCESSOR=auto``."""
+    #"""Used with ``WECOM_PROCESSOR=auto``."""
 
-    def __init__(
-        self,
-        settings: Settings,
-        *,
-        ollama_transport=None,
-        wecom_client=None,
+    def __init__(self, settings: Settings, *, ollama_transport=None, wecom_client=None,
     ) -> None:
         self.settings = settings
         settings.ensure_dirs()
@@ -73,49 +69,70 @@ class AutoProcessor:
         self.notifier = (
             ResultNotifier(wecom_client, settings) if wecom_client is not None else None
         )
+        self.text_processor = TextMessageProcessor(
+            self.settings, self.db, self.ollama, self.notifier
+        )
 
     def __call__(self, job: Job) -> None:
-        source = Path(job.file_path)
-        if not source.exists():
-            raise FileNotFoundError(f"源文件不存在: {source}")
-
-        if source.suffix.lower() in IMAGE_SUFFIXES:
-            try:
-                image = load_image(source)
-            except (UnidentifiedImageError, OSError):
-                log.warning("无法读取图片，归入 other: {}", source)
-                outcome = self._move(job, source, self.settings.other_dir, "other")
-            else:
-                analysis = self.classifier.analyze(
-                    image,
-                    received_date=_received_date(job),
-                    default_currency=self.settings.default_currency,
-                )
-                if analysis.category == "receipt":
-                    outcome = self.invoice_service.process(
-                        job, source, image, analysis=analysis
-                    )
-                    outcome["classifier"] = {
-                        "category": analysis.category,
-                        "confidence": analysis.confidence,
-                        "reason": analysis.reason,
-                    }
-                elif analysis.category == "homework":
-                    outcome = self._move(job, source, self.settings.homework_dir, "homework")
-                else:
-                    outcome = self._move(job, source, self.settings.other_dir, "other")
+        job_type = job.job_type
+        if job_type == "text":
+            # 将文本交给ollama处理文字消息、
+            outcome = self.text_processor.process(job)
+            log.info(f"处理文字消息 {job.msg_id} 内容: {job.data.get('content')}")
         else:
-            outcome = self._move(job, source, self.settings.other_dir, "other")
+            # 处理图片消息
+
+            source = Path(job.file_path)
+            if not source.exists():
+                raise FileNotFoundError(f"源文件不存在: {source}")
+
+            if source.suffix.lower() in IMAGE_SUFFIXES:
+                try:
+                    image = load_image(source)
+                except (UnidentifiedImageError, OSError):
+                    log.warning("无法读取图片，归入 other: {}", source)
+                    outcome = self._move(job, source, self.settings.other_dir, "other")
+                else:
+                    analysis = self.classifier.analyze(
+                        image,
+                        received_date=_received_date(job),
+                        default_currency=self.settings.default_currency,
+                    )
+                    if analysis.category == "receipt":
+                        outcome = self.invoice_service.process(
+                            job, source, image, analysis=analysis
+                        )
+                        outcome["classifier"] = {
+                            "category": analysis.category,
+                            "confidence": analysis.confidence,
+                            "reason": analysis.reason,
+                        }
+                    elif analysis.category == "homework":
+                        outcome = self._move(job, source, self.settings.homework_dir, "homework")
+                    else:
+                        outcome = self._move(job, source, self.settings.other_dir, "other")
+            else:
+                outcome = self._move(job, source, self.settings.other_dir, "other")
 
         self._update_job(job, outcome)
         if outcome.get("category") == "receipt" and self.notifier is not None:
             self.notifier.invoice_result(job.data, outcome)
 
+    # def process_text(self, job: Job) -> None:
+    #     #"""Process text messages."""
+    #     content = job.data.get("content")
+    #     log.info(f"处理文字消息 {job.msg_id} 内容: {content}")
+    #     # 这里可以添加对文本消息的处理逻辑，例如调用 Ollama 进行分析或分类
+
     def notify_failure(self, row: dict[str, Any], error: str) -> None:
         """Called by the worker after the last retry failed."""
         if self.notifier is None:
             return
-        self.notifier.invoice_failure(str(row.get("from_user") or ""), error)
+        to_user = str(row.get("from_user") or "")
+        if row.get("msg_type") == "text":
+            self.notifier.text_failure(to_user, error)
+        else:
+            self.notifier.invoice_failure(to_user, error)
 
     # ------------------------------------------------------------------ files
     def _move(self, job: Job, source: Path, base: Path, category: str) -> dict[str, Any]:

@@ -112,16 +112,32 @@ data/
 | `vendor` | 商店/供应商 |
 | `items_json` | 明细 JSON |
 | `tax_minor` | 税额 |
-| `image_path` / `source_path` | 单张发票切片 / 原图 |
+| `status` | `new` / `review` / `reviewed` / `reimbursed` |
+| `source` | `invoice`（OCR 识别） / `manual`（手工报销） |
+| `image_path` / `source_path` | 单张发票切片 / 原图（手工单为空，可用于人工校验） |
 | `segment_index` | 同一张原图中的第几张（从 0 开始） |
 | `segment_sha256` | 切片图哈希，唯一，用于重复检测 |
 | `source_sha256` | 原图哈希，仅溯源；同一张图的多张发票共享同一个值 |
-| `checked` / `checked_at` | 是否已检查 |
-| `reimbursed` / `reimbursed_at` | 是否已报销 |
+| `checked` / `checked_at` | 兼容旧字段，由 `status` 同步 |
+| `reimbursed` / `reimbursed_at` | 兼容旧字段，由 `status` 同步 |
 | `needs_review` | 是否需要人工复核 |
 | `ai_model` / `ai_confidence` | 模型与置信度 |
 
+状态流转：`new` → `review`（需要人工校对）/ `reviewed`（不需要校对或已校对）→ `reimbursed`。
+
 金额用整数最小单位存储，避免浮点误差。查询时按币种分别合计。
+
+### 文字消息指令
+
+除了图片，也可以直接给应用发文字，例如：
+
+- “查询最近一个月没有报销的发票和总额”
+- “把这周（11月17日到11月23日）的发票设为已报销”
+- “报销11月21日坐电车 A站到B站 480日元”
+- “检查 INV-2026-001 的发票”
+
+处理流程：文字 → LLM 生成命令 JSON → 查询/修改数据库 → LLM 生成回复 → 应用消息回复。
+手工报销写入 `source=manual`，`status=reviewed`（已报销则 `reimbursed`），`image_path` 为空。
 
 ---
 
@@ -134,16 +150,16 @@ python -m app.invoices query --from 2026-01-01 --to 2026-01-31
 # 只给合计
 python -m app.invoices total --from 2026-01 --to 2026-12
 
-# 只看未检查 / 未报销
-python -m app.invoices query --from 2026-01 --to 2026-12 --unchecked
-python -m app.invoices total --from 2026-01 --to 2026-12 --unreimbursed
+# 按状态筛选（new/review/reviewed/reimbursed/unpaid）
+python -m app.invoices query --from 2026-01 --to 2026-12 --status unpaid
+python -m app.invoices total --from 2026-01 --to 2026-12 --status review
 
 # 按供应商筛选
 python -m app.invoices query --from 2026-01 --to 2026-12 --vendor テスト
 
 # 标记为已检查、已报销
-python -m app.invoices mark 12 --checked
-python -m app.invoices mark 12 --reimbursed
+python -m app.invoices mark 12 --status reviewed
+python -m app.invoices mark 12 --status reimbursed
 python -m app.invoices mark --invoice-no INV-2026-001 --checked --reimbursed
 
 # 取消标记
@@ -161,18 +177,19 @@ python -m app.invoices stats
 
 ```
 日期范围: 2026-01-01 ~ 2026-01-31
-ID     日期        金额  供应商          发票号               查/报  内容
------  ----------  ------------  --------------------  ------------------  -----  ----------------------------------
-    1  2026-01-15    3,280 JPY  テスト商店      INV-2026-001        ··     ノート、笔
+ID     日期        金额  供应商          发票号               状态      内容
+-----  ----------  ------------  --------------------  ------------------  --------  ----------------------------------
+    1  2026-01-15    3,280 JPY  テスト商店      INV-2026-001        已校对    ノート、笔
 --------------------------------------------------------------------------------------------------------------
 合计: 3,280 JPY（1 张）
 ```
 
-`查/报` 两列分别是「已检查」「已报销」，`✓` 表示已完成。
+`状态` 列显示 new/review/reviewed/reimbursed；手工报销会额外标注「手工」。
 
 其他选项：
 
-- `--needs-review`：只看需人工复核的发票
+- `--needs-review`：只看待校对（review）的发票
+- `--source invoice|manual`：按来源筛选
 - `--json`：输出 JSON，方便接前端或其他脚本
 - `--db <路径>`：临时指定数据库
 - `WECOM_INVOICE_DB`：永久覆盖数据库位置

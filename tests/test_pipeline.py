@@ -136,7 +136,7 @@ def test_bad_signature_is_rejected():
         assert ctx.store.stats().get("total", 0) == 0
 
 
-def test_text_message_is_ignored():
+def test_text_message_is_queued_and_processed():
     settings = make_settings("e2e_text")
     app = create_app(settings, transport=media_transport()[0])
     with TestClient(app) as client:
@@ -144,8 +144,9 @@ def test_text_message_is_ignored():
         response = post_encrypted(client, ctx.crypto, text_message("3001"))
         assert response.status_code == 200
         assert response.text == ""
-        assert ctx.store.stats() == {"ignored": 1, "total": 1}
-        assert ctx.worker.process_once() == 0
+        assert ctx.store.stats() == {"pending": 1, "total": 1}
+        assert ctx.worker.process_once() == 1
+        assert ctx.store.get("3001")["status"] == "done"
 
 
 def test_oversized_media_fails_permanently():

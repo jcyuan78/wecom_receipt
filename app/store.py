@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS messages (
     sha256          TEXT,
     error           TEXT,
     raw_json        TEXT,
-    raw_xml         TEXT
+    raw_xml         TEXT,
+    content         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_pickup ON messages(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_messages_received ON messages(received_at);
@@ -82,8 +83,8 @@ class MessageStore:
 
     # --------------------------------------------------------------- writes
     def add_message(self, message: Message, raw_xml: str) -> bool:
-        """Insert a message.  Returns False when the MsgId was already seen."""
-        if message.is_media:
+        # """Insert a message.  Returns False when the MsgId was already seen."""
+        if message.is_media or message.is_text:
             status = "pending"
         else:
             status = "ignored"
@@ -94,8 +95,8 @@ class MessageStore:
                 """
                 INSERT OR IGNORE INTO messages (
                     msg_id, msg_type, from_user, to_user, agent_id, create_time,
-                    received_at, updated_at, status, attempts, media_id, raw_json, raw_xml
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    received_at, updated_at, status, attempts, media_id, raw_json, raw_xml, content
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                 """,
                 (
                     message.msg_id,
@@ -110,12 +111,13 @@ class MessageStore:
                     message.media_id,
                     json.dumps(message.raw_public(), ensure_ascii=False),
                     raw_xml,
+                    message.content,
                 ),
             )
             return cursor.rowcount == 1
 
     def claim_due(self, limit: int = 5) -> list[dict]:
-        """Atomically claim up to ``limit`` due rows for this worker."""
+        # """Atomically claim up to ``limit`` due rows for this worker."""
         now = iso(utcnow())
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")

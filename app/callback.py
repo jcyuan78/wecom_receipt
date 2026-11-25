@@ -44,7 +44,7 @@ async def verify_callback_url(
     nonce: str = "",
     echostr: str = "",
 ) -> Response:
-    """Answer the URL-verification request sent when saving the callback config."""
+    # """Answer the URL-verification request sent when saving the callback config."""
     ctx = _ctx(request)
     if isinstance(ctx, ProxyContext):
         return await forward_to(ctx, request)
@@ -64,12 +64,12 @@ async def verify_callback_url(
 
 @router.post("/wecom/callback")
 async def receive_message(request: Request) -> Response:
-    """Receive an encrypted message event.
+    #Receive an encrypted message event.
 
-    The handler only validates, decrypts and enqueues the message, then returns
-    within milliseconds.  Downloading happens in the background worker because
-    WeCom expects a response within 5 seconds.
-    """
+    #The handler only validates, decrypts and enqueues the message, then returns
+    #within milliseconds.  Downloading happens in the background worker because
+    #WeCom expects a response within 5 seconds.
+
     ctx = _ctx(request)
     if isinstance(ctx, ProxyContext):
         return await forward_to(ctx, request)
@@ -126,6 +126,10 @@ async def receive_message(request: Request) -> Response:
             return Response(content=envelope, media_type="application/xml")
         except Exception:  # noqa: BLE001 - the message is already queued
             log.exception("生成自动回复失败（消息已入队）")
+    elif message.is_text:
+        # 对文字消息进行处理
+        log.info(f"收到文字消息: {message.content}")
+        return Response(status_code=200)
 
     return Response(status_code=200)
 

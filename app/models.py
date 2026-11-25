@@ -35,6 +35,10 @@ class Message:
         return self.msg_type in MEDIA_TYPES and self.has_media
 
     @property
+    def is_text(self) -> bool:
+        return self.msg_type == "text" and bool(self.content)
+
+    @property
     def fallback_filename(self) -> str:
         if self.file_name:
             return self.file_name
@@ -46,7 +50,7 @@ class Message:
         return f"{self.msg_type}-{self.msg_id}{suffix}"
 
     def raw_public(self) -> dict[str, str]:
-        """Fields that are safe/useful to persist alongside the file."""
+        # """Fields that are safe/useful to persist alongside the file."""
         kept = {
             "MsgId",
             "MsgType",

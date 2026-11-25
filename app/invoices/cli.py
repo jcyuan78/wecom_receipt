@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Settings
-from .db import InvoiceDB
+from .db import SOURCE_LABELS, STATUS_LABELS, InvoiceDB
 from .parsing import format_money
 
 DEFAULT_START = date(2000, 1, 1)
@@ -61,13 +61,17 @@ def _summary(row: dict[str, Any]) -> str:
     return _truncate("、".join(names[:3]), 34)
 
 
-def _flags(row: dict[str, Any]) -> str:
-    return f"{'✓' if row.get('checked') else '·'}{'✓' if row.get('reimbursed') else '·'}"
+def _status_text(row: dict[str, Any]) -> str:
+    status = str(row.get("status") or "new")
+    label = STATUS_LABELS.get(status, status)
+    if row.get("source") == "manual":
+        return f"{label}/{SOURCE_LABELS['manual']}"
+    return label
 
 
 def _print_rows(rows: list[dict[str, Any]], totals: list[dict[str, Any]]) -> None:
-    header = ["ID", "日期", "金额", "供应商", "发票号", "查/报", "内容"]
-    widths = [5, 10, 16, 22, 18, 6, 34]
+    header = ["ID", "日期", "金额", "供应商", "发票号", "状态", "内容"]
+    widths = [5, 10, 16, 22, 18, 12, 34]
     print("  ".join(_pad(title, width) for title, width in zip(header, widths)))
     print("  ".join("-" * width for width in widths))
     for row in rows:
@@ -79,12 +83,12 @@ def _print_rows(rows: list[dict[str, Any]], totals: list[dict[str, Any]]) -> Non
                     _pad(format_money(int(row["amount_minor"]), str(row["currency"])), widths[2], align="right"),
                     _pad(_truncate(str(row.get("vendor") or "-"), widths[3]), widths[3]),
                     _pad(_truncate(str(row.get("invoice_no") or "-"), widths[4]), widths[4]),
-                    _pad(_flags(row), widths[5]),
+                    _pad(_status_text(row), widths[5]),
                     _pad(_summary(row), widths[6]),
                 ]
             )
         )
-    print("-" * 110)
+    print("-" * 120)
     _print_totals(totals, len(rows))
 
 
@@ -106,7 +110,13 @@ def _add_filters(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--vendor", help="按供应商模糊筛选")
     parser.add_argument("--unchecked", action="store_true", help="只看未检查")
     parser.add_argument("--unreimbursed", action="store_true", help="只看未报销")
-    parser.add_argument("--needs-review", action="store_true", help="只看需要人工复核")
+    parser.add_argument("--needs-review", action="store_true", help="只看待校对")
+    parser.add_argument(
+        "--status",
+        choices=["new", "review", "reviewed", "reimbursed", "unpaid"],
+        help="按状态筛选（unpaid = 未报销）",
+    )
+    parser.add_argument("--source", choices=["invoice", "manual"], help="按来源筛选")
 
 
 def _parse_bound(text: str | None, *, upper: bool) -> date:
@@ -130,6 +140,8 @@ def _filters(args: argparse.Namespace) -> dict[str, Any]:
         "only_unreimbursed": getattr(args, "unreimbursed", False),
         "needs_review": getattr(args, "needs_review", False),
         "vendor": getattr(args, "vendor", None),
+        "status": getattr(args, "status", None),
+        "source": getattr(args, "source", None),
     }
 
 
@@ -183,8 +195,8 @@ def _cmd_show(args: argparse.Namespace, db: InvoiceDB, settings: Settings) -> in
 
 
 def _cmd_mark(args: argparse.Namespace, db: InvoiceDB, settings: Settings, value: bool) -> int:
-    if not args.checked and not args.reimbursed:
-        print("请至少指定 --checked 或 --reimbursed", file=sys.stderr)
+    if not args.status and not args.checked and not args.reimbursed:
+        print("请指定 --status 或 --checked/--reimbursed", file=sys.stderr)
         return 2
     if not args.id and not args.invoice_no:
         print("请提供发票 ID 或 --invoice-no", file=sys.stderr)
@@ -195,17 +207,21 @@ def _cmd_mark(args: argparse.Namespace, db: InvoiceDB, settings: Settings, value
         print("未找到该发票", file=sys.stderr)
         return 2
 
-    updated = db.set_status(
-        int(record["id"]),
-        checked=value if args.checked else None,
-        reimbursed=value if args.reimbursed else None,
-    )
+    if args.status:
+        target_status = args.status
+    elif args.reimbursed:
+        target_status = "reimbursed" if value else "reviewed"
+    elif args.checked:
+        target_status = "reviewed" if value else "review"
+    else:
+        target_status = "reviewed"
+
+    updated = db.set_status(int(record["id"]), status=target_status)
     assert updated is not None
     print(
         f"#{updated['id']} {updated['invoice_date']} "
         f"{format_money(int(updated['amount_minor']), str(updated['currency']))} "
-        f"检查={'是' if updated['checked'] else '否'} "
-        f"报销={'是' if updated['reimbursed'] else '否'}"
+        f"状态={STATUS_LABELS.get(updated['status'], updated['status'])}"
     )
     return 0
 
@@ -218,7 +234,7 @@ def _cmd_export(args: argparse.Namespace, db: InvoiceDB, settings: Settings) -> 
     with output.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["ID", "日期", "金额", "币种", "供应商", "发票号", "内容", "已检查", "已报销", "需复核", "图片"]
+            ["ID", "日期", "金额", "币种", "供应商", "发票号", "内容", "状态", "来源", "图片"]
         )
         for row in rows:
             writer.writerow(
@@ -230,9 +246,8 @@ def _cmd_export(args: argparse.Namespace, db: InvoiceDB, settings: Settings) -> 
                     row.get("vendor") or "",
                     row.get("invoice_no") or "",
                     _summary(row),
-                    "是" if row["checked"] else "否",
-                    "是" if row["reimbursed"] else "否",
-                    "是" if row["needs_review"] else "否",
+                    STATUS_LABELS.get(row["status"], row["status"]),
+                    SOURCE_LABELS.get(row["source"], row["source"]),
                     row.get("image_path") or "",
                 ]
             )
@@ -275,8 +290,9 @@ def build_parser() -> argparse.ArgumentParser:
     mark = subparsers.add_parser("mark", help="标记为已检查/已报销")
     mark.add_argument("id", nargs="?", type=int)
     mark.add_argument("--invoice-no")
-    mark.add_argument("--checked", action="store_true")
-    mark.add_argument("--reimbursed", action="store_true")
+    mark.add_argument("--checked", action="store_true", help="兼容旧参数：= reviewed")
+    mark.add_argument("--reimbursed", action="store_true", help="兼容旧参数：= reimbursed")
+    mark.add_argument("--status", choices=["new", "review", "reviewed", "reimbursed"])
     mark.set_defaults(func=lambda a, d, s: _cmd_mark(a, d, s, True))
 
     unmark = subparsers.add_parser("unmark", help="取消已检查/已报销标记")
@@ -284,6 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     unmark.add_argument("--invoice-no")
     unmark.add_argument("--checked", action="store_true")
     unmark.add_argument("--reimbursed", action="store_true")
+    unmark.add_argument("--status", choices=["new", "review", "reviewed", "reimbursed"])
     unmark.set_defaults(func=lambda a, d, s: _cmd_mark(a, d, s, False))
 
     export = subparsers.add_parser("export", help="导出 CSV")

@@ -30,6 +30,16 @@ class ResultNotifier:
         except Exception:  # noqa: BLE001 - notifications must never fail the job
             log.opt(exception=True).warning("回复企业微信用户失败（不影响入库）: {}", to_user)
 
+    def reply(self, to_user: str, text: str) -> None:
+        """Send a direct reply for a text-message command."""
+        self._send(to_user, text)
+
+    def text_failure(self, to_user: str, error: str) -> None:
+        if not self.settings.notify_failure:
+            return
+        log.warning("文字指令处理失败: {} ({})", to_user, error)
+        self._send(to_user, "这次处理没有成功，请稍后重试，或换一种说法。")
+
     def invoice_result(self, job_data: dict[str, Any], outcome: dict[str, Any]) -> None:
         if not self.settings.notify_results:
             return
@@ -59,9 +69,8 @@ class ResultNotifier:
                 f"商家：{record.get('vendor') or '-'}",
                 f"金额：{record.get('amount_display') or '-'}",
                 f"发票号：{record.get('invoice_no') or '未识别'}",
+                f"状态：{record.get('status_label') or '已校对'}",
             ]
-            if record.get("needs_review"):
-                lines.append("状态：需人工复核")
         else:
             lines = [f"✅ 共识别 {len(invoices)} 张发票"]
             for index, record in enumerate(invoices, 1):
@@ -93,3 +102,11 @@ class ResultNotifier:
             "❌ 发票识别失败，请重新拍摄后发送。\n"
             "建议：光线充足、发票平铺、四角完整入镜、避免反光。",
         )
+
+    def query_result(self, job_data: dict[str, Any], outcome: dict[str, Any]) -> None:
+        if not self.settings.notify_results:
+            return
+
+        to_user = str(job_data.get("from_user") or "")
+        result = outcome.get("result") or "未生成结果"
+        self._send(to_user, f"ℹ️ 查询结果: {result}")

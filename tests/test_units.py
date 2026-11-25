@@ -193,10 +193,10 @@ class TestStore:
         assert row["attempts"] == 2
         store.close()
 
-    def test_text_message_is_ignored(self):
+    def test_text_message_is_queued(self):
         store = MessageStore(self._db("text"))
         store.init()
         store.add_message(Message(msg_id="t", msg_type="text", from_user="a", content="hi"), "<xml/>")
-        assert store.stats() == {"ignored": 1, "total": 1}
-        assert store.claim_due() == []
+        assert store.stats() == {"pending": 1, "total": 1}
+        assert len(store.claim_due()) == 1
         store.close()

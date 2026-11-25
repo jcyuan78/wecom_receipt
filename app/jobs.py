@@ -43,6 +43,7 @@ def build_job(row: dict[str, Any]) -> dict[str, Any]:
         "agent_id": row["agent_id"],
         "created_at": _epoch_to_iso(row.get("create_time")),
         "received_at": row["received_at"],
+        "content": row.get("content"),
         "file": {
             "path": row["file_path"],
             "name": row["filename"],

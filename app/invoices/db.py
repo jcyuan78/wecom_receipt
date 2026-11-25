@@ -1,4 +1,4 @@
-"""SQLite storage for parsed invoices."""
+"""SQLite storage for parsed invoices and manual reimbursement records."""
 
 from __future__ import annotations
 
@@ -34,13 +34,31 @@ CREATE TABLE IF NOT EXISTS invoices (
     reimbursed_at   TEXT,
     notes           TEXT,
     raw_json        TEXT,
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'new',
+    source          TEXT NOT NULL DEFAULT 'invoice'
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_no
     ON invoices(invoice_no) WHERE invoice_no IS NOT NULL AND invoice_no <> '';
 CREATE INDEX IF NOT EXISTS ix_invoices_date ON invoices(invoice_date);
 CREATE INDEX IF NOT EXISTS ix_invoices_status ON invoices(checked, reimbursed);
 """
+
+STATUS_NEW = "new"
+STATUS_REVIEW = "review"
+STATUS_REVIEWED = "reviewed"
+STATUS_REIMBURSED = "reimbursed"
+STATUSES = (STATUS_NEW, STATUS_REVIEW, STATUS_REVIEWED, STATUS_REIMBURSED)
+SOURCES = ("invoice", "manual")
+
+# Human-facing labels used by the CLI and text replies.
+STATUS_LABELS = {
+    STATUS_NEW: "新添加",
+    STATUS_REVIEW: "待校对",
+    STATUS_REVIEWED: "已校对",
+    STATUS_REIMBURSED: "已报销",
+}
+SOURCE_LABELS = {"invoice": "发票", "manual": "手工"}
 
 
 class DuplicateInvoiceError(RuntimeError):
@@ -54,6 +72,16 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def normalize_status(value: str | None, default: str = STATUS_NEW) -> str:
+    status = str(value or "").strip().lower()
+    return status if status in STATUSES else default
+
+
+def normalize_source(value: str | None) -> str:
+    source = str(value or "").strip().lower()
+    return source if source in SOURCES else "invoice"
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     try:
@@ -63,6 +91,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data["checked"] = bool(data.get("checked"))
     data["reimbursed"] = bool(data.get("reimbursed"))
     data["needs_review"] = bool(data.get("needs_review"))
+    data["status"] = normalize_status(data.get("status"))
+    data["source"] = normalize_source(data.get("source"))
     return data
 
 
@@ -85,7 +115,7 @@ class InvoiceDB:
             self._migrate()
 
     def _migrate(self) -> None:
-        """Make databases created by the single-invoice version compatible."""
+        """Make databases from the single-invoice / boolean-status era compatible."""
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(invoices)")}
         if "segment_index" not in columns:
             self._conn.execute(
@@ -118,6 +148,31 @@ class InvoiceDB:
             """
         )
 
+        # Status workflow: new -> review/reviewed -> reimbursed.
+        if "status" not in columns:
+            self._conn.execute(
+                "ALTER TABLE invoices ADD COLUMN status TEXT NOT NULL DEFAULT 'new'"
+            )
+            self._conn.execute(
+                """
+                UPDATE invoices
+                   SET status = CASE
+                         WHEN reimbursed = 1 THEN 'reimbursed'
+                         WHEN checked = 1 THEN 'reviewed'
+                         WHEN needs_review = 1 THEN 'review'
+                         ELSE 'reviewed'
+                       END
+                """
+            )
+        if "source" not in columns:
+            self._conn.execute(
+                "ALTER TABLE invoices ADD COLUMN source TEXT NOT NULL DEFAULT 'invoice'"
+            )
+
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS ix_invoices_state ON invoices(status, source)"
+        )
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -144,10 +199,19 @@ class InvoiceDB:
         needs_review: bool,
         raw: dict[str, Any],
         notes: str | None = None,
+        status: str | None = None,
+        source: str = "invoice",
     ) -> int:
         existing = self.find_duplicate(invoice_no, segment_sha256)
         if existing is not None:
             raise DuplicateInvoiceError(existing)
+
+        status = normalize_status(status or (STATUS_REVIEW if needs_review else STATUS_REVIEWED))
+        source = normalize_source(source)
+        checked = status in {STATUS_REVIEWED, STATUS_REIMBURSED}
+        reimbursed = status == STATUS_REIMBURSED
+        needs_review = status == STATUS_REVIEW
+        now = utcnow_iso()
 
         with self._lock:
             try:
@@ -157,8 +221,9 @@ class InvoiceDB:
                         invoice_no, invoice_date, amount_minor, currency, vendor,
                         items_json, tax_minor, image_path, source_msg_id, source_path,
                         source_sha256, segment_index, segment_sha256, ai_model,
-                        ai_confidence, needs_review, notes, raw_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ai_confidence, needs_review, checked, reimbursed, checked_at,
+                        reimbursed_at, notes, raw_json, created_at, status, source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         invoice_no,
@@ -168,18 +233,24 @@ class InvoiceDB:
                         vendor,
                         json.dumps(items, ensure_ascii=False),
                         tax_minor,
-                        image_path,
+                        image_path or None,
                         source_msg_id,
-                        source_path,
-                        source_sha256,
+                        source_path or None,
+                        source_sha256 or None,
                         int(segment_index),
                         segment_sha256,
                         ai_model,
                         float(ai_confidence),
                         1 if needs_review else 0,
+                        1 if checked else 0,
+                        1 if reimbursed else 0,
+                        now if checked else None,
+                        now if reimbursed else None,
                         notes,
                         json.dumps(raw, ensure_ascii=False),
-                        utcnow_iso(),
+                        now,
+                        status,
+                        source,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -190,37 +261,115 @@ class InvoiceDB:
 
         return int(cursor.lastrowid or 0)
 
+    def add_manual(
+        self,
+        *,
+        expense_date: date,
+        amount_minor: int,
+        currency: str,
+        payee: str | None,
+        category: str | None,
+        description: str,
+        source_msg_id: str = "",
+        notes: str | None = None,
+        reimbursed: bool = False,
+        status: str | None = None,
+    ) -> int:
+        """Create a reimbursement record that has no invoice image."""
+        status = status or (STATUS_REIMBURSED if reimbursed else STATUS_REVIEWED)
+        items = [item for item in (category, description) if item]
+        raw = {
+            "manual": True,
+            "category": category,
+            "description": description,
+        }
+        return self.add(
+            invoice_no=None,
+            invoice_date=expense_date,
+            amount_minor=amount_minor,
+            currency=currency,
+            vendor=payee or (category or "手工报销"),
+            items=[{"name": " / ".join(items) or "手工报销"}],
+            tax_minor=None,
+            image_path="",
+            source_msg_id=source_msg_id,
+            source_path="",
+            source_sha256="",
+            segment_index=0,
+            segment_sha256=None,
+            ai_model="manual",
+            ai_confidence=1.0,
+            needs_review=False,
+            raw=raw,
+            notes=notes,
+            status=status,
+            source="manual",
+        )
+
     def set_status(
         self,
         record_id: int,
         *,
+        status: str | None = None,
         checked: bool | None = None,
         reimbursed: bool | None = None,
         notes: str | None = None,
     ) -> dict[str, Any] | None:
-        assignments: list[str] = []
-        params: list[Any] = []
+        row = self.get(record_id)
+        if row is None:
+            return None
+
+        if status is None:
+            if reimbursed is True:
+                status = STATUS_REIMBURSED
+            elif reimbursed is False and row["status"] == STATUS_REIMBURSED:
+                status = STATUS_REVIEWED
+            elif checked is True:
+                status = STATUS_REVIEWED
+            elif checked is False:
+                status = STATUS_REVIEW
+            else:
+                status = row["status"]
+
+        status = normalize_status(status, row["status"])
+        checked_flag = status in {STATUS_REVIEWED, STATUS_REIMBURSED}
+        reimbursed_flag = status == STATUS_REIMBURSED
+        needs_review = status == STATUS_REVIEW
         now = utcnow_iso()
 
-        if checked is not None:
-            assignments.append("checked = ?, checked_at = ?")
-            params.extend([1 if checked else 0, now if checked else None])
-        if reimbursed is not None:
-            assignments.append("reimbursed = ?, reimbursed_at = ?")
-            params.extend([1 if reimbursed else 0, now if reimbursed else None])
+        assignments = [
+            "status = ?",
+            "checked = ?",
+            "reimbursed = ?",
+            "needs_review = ?",
+            "checked_at = ?",
+            "reimbursed_at = ?",
+        ]
+        params: list[Any] = [
+            status,
+            1 if checked_flag else 0,
+            1 if reimbursed_flag else 0,
+            1 if needs_review else 0,
+            now if checked_flag else None,
+            now if reimbursed_flag else None,
+        ]
         if notes is not None:
             assignments.append("notes = ?")
             params.append(notes)
-
-        if not assignments:
-            return self.get(record_id)
-
         params.append(record_id)
+
         with self._lock:
             self._conn.execute(
                 f"UPDATE invoices SET {', '.join(assignments)} WHERE id = ?", params
             )
         return self.get(record_id)
+
+    def update_status_by_ids(self, ids: list[int], status: str) -> int:
+        updated = 0
+        for record_id in ids:
+            if self.set_status(int(record_id), status=status) is not None:
+                updated += 1
+        return updated
 
     # -------------------------------------------------------------- read
     def get(self, record_id: int) -> dict[str, Any] | None:
@@ -261,22 +410,34 @@ class InvoiceDB:
         start: date,
         end: date,
         *,
-        only_unchecked: bool,
-        only_unreimbursed: bool,
-        needs_review: bool,
-        vendor: str | None,
+        only_unchecked: bool = False,
+        only_unreimbursed: bool = False,
+        needs_review: bool = False,
+        vendor: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
     ) -> tuple[str, list[Any]]:
         clauses = ["invoice_date >= ?", "invoice_date <= ?"]
         params: list[Any] = [start.isoformat(), end.isoformat()]
+
         if only_unchecked:
-            clauses.append("checked = 0")
+            clauses.append("status IN ('new', 'review')")
         if only_unreimbursed:
-            clauses.append("reimbursed = 0")
+            clauses.append("status != 'reimbursed'")
         if needs_review:
-            clauses.append("needs_review = 1")
+            clauses.append("status = 'review'")
         if vendor:
             clauses.append("vendor LIKE ?")
             params.append(f"%{vendor}%")
+        if status == "unpaid":
+            clauses.append("status != 'reimbursed'")
+        elif status:
+            clauses.append("status = ?")
+            params.append(normalize_status(status))
+        if source:
+            clauses.append("source = ?")
+            params.append(normalize_source(source))
+
         return " AND ".join(clauses), params
 
     def query(
@@ -288,6 +449,8 @@ class InvoiceDB:
         only_unreimbursed: bool = False,
         needs_review: bool = False,
         vendor: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         where, params = self._where(
@@ -297,6 +460,8 @@ class InvoiceDB:
             only_unreimbursed=only_unreimbursed,
             needs_review=needs_review,
             vendor=vendor,
+            status=status,
+            source=source,
         )
         sql = f"SELECT * FROM invoices WHERE {where} ORDER BY invoice_date, id"
         if limit:
@@ -315,6 +480,8 @@ class InvoiceDB:
         only_unreimbursed: bool = False,
         needs_review: bool = False,
         vendor: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
     ) -> list[dict[str, Any]]:
         where, params = self._where(
             start,
@@ -323,6 +490,8 @@ class InvoiceDB:
             only_unreimbursed=only_unreimbursed,
             needs_review=needs_review,
             vendor=vendor,
+            status=status,
+            source=source,
         )
         with self._lock:
             rows = self._conn.execute(
@@ -335,14 +504,55 @@ class InvoiceDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def aggregate(
+        self,
+        start: date,
+        end: date,
+        *,
+        group_by: str = "currency",
+        status: str | None = None,
+        source: str | None = None,
+        vendor: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Group totals by month/vendor/status/source/currency."""
+        expressions = {
+            "month": "substr(invoice_date, 1, 7)",
+            "vendor": "COALESCE(vendor, '')",
+            "status": "status",
+            "source": "source",
+            "currency": "currency",
+        }
+        expression = expressions.get(group_by, "currency")
+        where, params = self._where(
+            start,
+            end,
+            vendor=vendor,
+            status=status,
+            source=source,
+        )
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT {expression} AS group_key, currency,
+                       SUM(amount_minor) AS total_minor, COUNT(*) AS count
+                  FROM invoices WHERE {where}
+                 GROUP BY group_key, currency
+                 ORDER BY group_key, currency
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def stats(self) -> dict[str, Any]:
         with self._lock:
             row = self._conn.execute(
                 """
                 SELECT COUNT(*) AS total,
-                       COALESCE(SUM(CASE WHEN checked = 0 THEN 1 ELSE 0 END), 0) AS unchecked,
-                       COALESCE(SUM(CASE WHEN reimbursed = 0 THEN 1 ELSE 0 END), 0) AS unreimbursed,
-                       COALESCE(SUM(CASE WHEN needs_review = 1 THEN 1 ELSE 0 END), 0) AS needs_review
+                       COALESCE(SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END), 0) AS new,
+                       COALESCE(SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END), 0) AS review,
+                       COALESCE(SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END), 0) AS reviewed,
+                       COALESCE(SUM(CASE WHEN status = 'reimbursed' THEN 1 ELSE 0 END), 0) AS reimbursed,
+                       COALESCE(SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END), 0) AS manual
                   FROM invoices
                 """
             ).fetchone()

@@ -307,8 +307,10 @@ job JSON（`wecom.receiver.job/v1`）：
 | `segment_sha256` | 切片图哈希，唯一，去重键 |
 | `ai_model` / `ai_confidence` | 模型与置信度 |
 | `needs_review` | 是否需人工复核 |
-| `checked` / `checked_at` | 是否已检查 |
-| `reimbursed` / `reimbursed_at` | 是否已报销 |
+| `status` | new / review / reviewed / reimbursed |
+| `source` | invoice / manual |
+| `checked` / `checked_at` | 兼容旧字段，由 status 同步 |
+| `reimbursed` / `reimbursed_at` | 兼容旧字段，由 status 同步 |
 | `notes` / `raw_json` / `created_at` | 备注、原始 JSON、创建时间 |
 
 索引：
@@ -468,7 +470,25 @@ AutoProcessor.__call__
 
 注意：分类和字段提取是**一次模型调用**完成的；`analysis.fields` 会直接传给发票服务，单张发票不会对切图再次识别。
 
-### 4.5 发票处理流程
+### 4.5 文字消息处理流程
+
+`AutoProcessor.__call__` 在 `job.job_type == "text"` 时走：
+
+```
+TextMessageProcessor.process(job)
+├─ OllamaClient.generate_json(PROMPT_ANALYZE, content)   # 消息 → 命令
+├─ _execute(command)
+│  ├─ query_invoices  → InvoiceDB.query
+│  ├─ sum_invoices    → InvoiceDB.query + 分组汇总
+│  ├─ mark_invoices   → InvoiceDB.update_status_by_ids
+│  └─ create_manual_expense → InvoiceDB.add_manual
+├─ OllamaClient.generate_text(PROMPT_RESPONSE, result)   # 结果 → 回复
+└─ ResultNotifier.reply(from_user, reply)
+```
+
+文字消息在 `messages` 表中状态为 `pending`，由 worker 调用处理器后 `done`。
+
+### 4.6 发票处理流程
 
 `InvoiceService.process()`：
 
@@ -516,7 +536,7 @@ _remove_source(source, original_path)   # 删除 inbox 原文件
 返回 {category, segments, invoice_count, invoices, duplicates, failed_segments, ...}
 ```
 
-### 4.6 结果通知流程
+### 4.7 结果通知流程
 
 `ResultNotifier`：
 
@@ -541,7 +561,7 @@ Worker._handle → mark_retry() 返回 failed
          └─ “❌ 发票识别失败，请重新拍摄后发送”
 ```
 
-### 4.7 调试代理流程
+### 4.8 调试代理流程
 
 生产服务器（`mode=proxy`）：
 
@@ -742,7 +762,7 @@ working ──reset_stuck(>600s)──▶ pending/downloaded
 
 ## 7. 测试与扩展点
 
-### 7.1 测试结构（102 项）
+### 7.1 测试结构（112 项）
 
 | 文件 | 覆盖 |
 |---|---|
