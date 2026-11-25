@@ -193,6 +193,19 @@ class TestStore:
         assert row["attempts"] == 2
         store.close()
 
+    def test_content_column_migration(self):
+        path = self._db("content_migration")
+        first = MessageStore(path)
+        first.init()
+        first._conn.execute("ALTER TABLE messages DROP COLUMN content")
+        first.close()
+
+        second = MessageStore(path)
+        second.init()
+        columns = {row[1] for row in second._conn.execute("PRAGMA table_info(messages)")}
+        assert "content" in columns
+        second.close()
+
     def test_text_message_is_queued(self):
         store = MessageStore(self._db("text"))
         store.init()

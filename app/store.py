@@ -76,6 +76,13 @@ class MessageStore:
     def init(self) -> None:
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the first deployment."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(messages)")}
+        if "content" not in columns:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN content TEXT")
 
     def close(self) -> None:
         with self._lock:

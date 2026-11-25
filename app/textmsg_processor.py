@@ -62,7 +62,8 @@ arguments:
     "min_amount_minor": int 或 null,
     "max_amount_minor": int 或 null
   }},
-  "limit": 1-200 的整数
+  "limit": 1-200 的整数,
+  "sql": "可选：只读 SELECT，仅用于调试"
 }}
 
 2) sum_invoices：查询合计与笔数
@@ -401,6 +402,8 @@ class TextMessageProcessor:
         filters = self._filters(arguments.get("filters") or {})
         limit = self._limit(arguments.get("limit"))
         rows = self._select(filters)[:limit]
+        log.debug("文字指令查询: filters={} limit={} rows={}", filters, limit, len(rows))
+        log.debug("文字指令查询 SQL: {}", arguments.get("sql"))
         return {
             "ok": True,
             "kind": "list",
@@ -413,6 +416,8 @@ class TextMessageProcessor:
     def _sum(self, arguments: dict[str, Any]) -> dict[str, Any]:
         filters = self._filters(arguments.get("filters") or {})
         rows = self._select(filters)
+        log.debug("文字指令汇总: filters={} rows={}", filters, len(rows))
+        log.debug("文字指令查询 SQL: {}", arguments.get("sql"))
         group_by = str(arguments.get("group_by") or "none").lower()
         groups = self._group(rows, group_by)
         totals = self._totals(rows)

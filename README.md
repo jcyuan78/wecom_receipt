@@ -45,7 +45,7 @@
 - **文字指令**：查询未报销记录与总额、批量改状态、新增无发票报销、查看发票图片路径。
 - **调试代理**：生产服务器只转发，开发机在内网跑完整流程，见 [docs/debug-proxy.md](docs/debug-proxy.md)。
 - **可观测**：滚动日志、`/healthz` 队列统计、可选 `/api/messages` 调试接口。
-- **可离线验收**：`tools/demo_local.py` 用模拟企业微信服务跑通完整加密回调；112 个自动化测试。
+- **可离线验收**：`tools/demo_local.py` 用模拟企业微信服务跑通完整加密回调；113 个自动化测试。
 
 ---
 
@@ -349,7 +349,7 @@ tools/
 ├─ check_ai.py     检查 Ollama 与视觉模型
 └─ gen_keys.py     生成 Token / EncodingAESKey
 
-tests/             112 个单元 + 端到端测试
+tests/             113 个单元 + 端到端测试
 docs/              代码说明、后台配置、发票流水线、调试代理、识别调优
 ```
 
