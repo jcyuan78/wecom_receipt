@@ -76,7 +76,7 @@ def configure_logging(settings: Settings) -> None:
             rotation="5 MB",
             retention=5,
             encoding="utf-8",
-            enqueue=True,
+            enqueue=False,
             backtrace=False,
             diagnose=False,
         )
